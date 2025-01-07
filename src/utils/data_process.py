@@ -46,11 +46,73 @@ class DataProcess:
         except PermissionError:
             raise PermissionError(f"No permission to access the {DATA_PATH}")
         
-    def _idf2dict(self, filename: str):
-        """
-        Extract data from the files
-        """
+    # def _idf2dict(self, filename: str):
+    #     """
+    #     Extract data from the files
+    #     """
 
+    #     with open(os.path.join(DATA_PATH, filename), "r") as f:
+    #         data = f.read()
+        
+    #     pattern = re.compile(r"(?:^ {2})([^\s,;!]+)(?:,([^;]+);$)?"
+    #                          r"|^ {4}(.*)[,;]\s*!- ([^{}\n]+)(?:{([^{}]+)})?",
+    #                          re.MULTILINE)
+        
+        
+    #     data_dict = {'Root': {"type": "Root", "value": filename.strip(".idf")}}
+    #     group = None
+    #     sub_id = 0
+
+    #     for line in data.split("\n"):
+    #         match_result = pattern.findall(line)
+    #         if not match_result:
+    #             continue
+
+    #         groups = match_result[0]
+    #         parent_key, parent_val, sub_val, sub_key, sub_unit = groups
+    #         if parent_val:
+    #             sub_group = None
+    #             group = parent_key
+    #             data_dict['Root'][group] = {"type": "Group", "value": parent_val}
+    #             sub_id = 0
+
+    #         elif parent_key:
+    #             sub_group = None
+    #             group = parent_key
+    #             if group not in data_dict['Root']:
+    #                 data_dict['Root'][group] = {"type": "Group", "value": None}
+    #             sub_id = 0
+            
+    #         elif sub_key and group:
+    #             if sub_key == "Name":
+    #                 sub_group = sub_val
+    #                 data_dict['Root'][group][sub_group] = {"type": "Sub_Group", "value": None}
+    #                 sub_id = 0
+    #                 continue
+
+    #             if sub_group:
+    #                 data_dict['Root'][group][sub_group][sub_id] = {
+    #                     'type': 'Key',
+    #                     'id': sub_id,
+    #                     'name': sub_key,
+    #                     'value': sub_val if sub_val else None,
+    #                     'unit': sub_unit if sub_unit else None,
+    #                 }
+    #                 sub_id += 1
+
+    #             else:
+    #                 data_dict['Root'][group][sub_id] = {
+    #                     'type': 'Key',
+    #                     'id': sub_id,
+    #                     'name': sub_key,
+    #                     'value': sub_val if sub_val else None,
+    #                     'unit': sub_unit if sub_unit else None,
+    #                 }
+    #                 sub_id += 1
+
+    #     return data_dict
+
+    def _idf2dict(self, filename: str):
         with open(os.path.join(DATA_PATH, filename), "r") as f:
             data = f.read()
         
@@ -58,127 +120,149 @@ class DataProcess:
                              r"|^ {4}(.*)[,;]\s*!- ([^{}\n]+)(?:{([^{}]+)})?",
                              re.MULTILINE)
         
-        data_dict = {'Root': {"type": "Root", "value": filename.strip(".idf")}}
-        group = None
+        data_dict = {'objects':[], 'filename': filename}
 
         for line in data.split("\n"):
-            match_result = pattern.findall(line)
-            if not match_result:
+            if not pattern.match(line):
                 continue
 
-            groups = match_result[0]
+            groups = pattern.match(line).groups()
             parent_key, parent_val, sub_val, sub_key, sub_unit = groups
+
             if parent_val:
-                sub_group = None
-                group = parent_key
-                data_dict['Root'][group] = {"type": "Group", "value": parent_val}
+                data_dict['objects'].append({
+                    'type': parent_key,
+                    'value': parent_val,
+                    'name': '',
+                    'note': [],
+                    'programline': [],
+                    'units': []
+                })
             
             elif parent_key:
-                sub_group = None
-                group = parent_key
-                if group not in data_dict['Root']:
-                    data_dict['Root'][group] = {"type": "Group", "value": None}
+                data_dict['objects'].append({
+                    'type': parent_key,
+                    'value': '',
+                    'name': '',
+                    'note': [],
+                    'programline': [],
+                    'units': []
+                })
             
-            elif sub_key and group:
+            elif sub_key:
                 if sub_key == "Name":
-                    sub_group = sub_val
-                    data_dict['Root'][group][sub_group] = {"type": "Sub_Group", "value": None}
-                    continue
-
-                if sub_group:
-                    data_dict['Root'][group][sub_group][sub_key] = {
-                        'type': 'Key',
-                        'value': sub_val if sub_val else None,
-                        'unit': sub_unit if sub_unit else None,
-                    }
-
-                else:
-                    data_dict['Root'][group][sub_key] = {
-                        'type': 'Key',
-                        'value': sub_val if sub_val else None,
-                        'unit': sub_unit if sub_unit else None,
-                    }
-
+                    data_dict['objects'][-1]['name'] = sub_val
+                data_dict['objects'][-1]['note'].append(sub_key)
+                data_dict['objects'][-1]['programline'].append(sub_val if sub_val else '')
+                data_dict['objects'][-1]['units'].append(sub_unit if sub_unit else '')
+        
         return data_dict
+
+    # def _json2dict(self, filename: str):
+    #     with open(os.path.join(DATA_PATH, filename), "r") as f:
+    #         data = json.load(f)
+    #     return data
     
-    def _json2dict(self, filename: str):
+    # def _dict2idf(self, data_dict: dict):
+    #     idf_data = ""
+    #     groups = [k for k in data_dict['Root'].keys() if k != "type" and k != "value"]
+    #     for group in groups:
+    #         idf_data += self._dict2str(data_dict['Root'][group], group)
+    #         idf_data += "\n"
+
+    #     return idf_data
+
+    # def _dict2str(self, data:dict, name:str):
+    #     def _get_keys(keys:list):
+    #         data_str = ""
+    #         for i,key in enumerate(keys):
+    #             sign = "," if i != len(keys) - 1 else ";"
+    #             value = data[key]['value']
+    #             unit = ' {' + data[key]['unit'] + '}' if data[key]['unit'] else ""
+    #             data_str += f"    {value}{sign}    !- {key}{unit}\n"
+    #         return data_str
+        
+    #     if data['type'] == "Group":
+    #         keys = [k for k in data.keys() if k != "type" and k != "value"]
+    #         value = data['value'] + ";" if data['value'] else ""
+            
+    #         if not keys:
+    #             data_str = f"  {name},{value}\n"
+    #             return data_str
+    #         else:
+    #             if self._dict_depth(data) == 2:
+    #                 data_str = f"  {name},{value}\n"
+    #                 keys = [k for k in data.keys() if k != "type" and k != "value"]
+    #                 data_str += _get_keys(keys)
+    #                 return data_str
+    #             else:
+    #                 data_str = ""
+    #                 for key in keys:
+    #                     data_str += f"  {name},{value}\n"
+    #                     data_str += self._dict2str(data[key], key) + "\n"
+    #                 return data_str
+        
+    #     elif data['type'] == "Sub_Group":
+    #         keys = [k for k in data.keys() if k != "type" and k != "value"]
+    #         data_str = f"    {name},    !- name\n"
+    #         data_str += _get_keys(keys)
+    #         return data_str
+        
+    # def _dict_depth(self, data:dict):
+    #     max_depth = 0
+    #     if not isinstance(data, dict) or not data:
+    #         return 0
+        
+    #     for value in data.values():
+    #         if isinstance(value, dict):
+    #             sub_depth = self._dict_depth(value)
+    #             max_depth = max(max_depth, sub_depth)
+    #     return max_depth + 1
+
+
+    def _json2idf(self, filename: str) -> str:
         with open(os.path.join(DATA_PATH, filename), "r") as f:
             data = json.load(f)
-        return data
-    
-    def _dict2idf(self, data_dict: dict):
+        
         idf_data = ""
-        groups = [k for k in data_dict['Root'].keys() if k != "type" and k != "value"]
-        for group in groups:
-            idf_data += self._dict2str(data_dict['Root'][group], group)
+
+        for obj in data['objects']:
+            sign = ";" if obj['value'] else ""
+            idf_data += f"  {obj['type']},{obj['value']}{sign}\n"
+            idf_data += self._combine_programline(obj)
             idf_data += "\n"
-
-        return idf_data
-
-    def _dict2str(self, data:dict, name:str):
-        def _get_keys(keys:list):
-            data_str = ""
-            for i,key in enumerate(keys):
-                sign = "," if i != len(keys) - 1 else ";"
-                value = data[key]['value']
-                unit = ' {' + data[key]['unit'] + '}' if data[key]['unit'] else ""
-                data_str += f"    {value}{sign}    !- {key}{unit}\n"
-            return data_str
         
-        if data['type'] == "Group":
-            keys = [k for k in data.keys() if k != "type" and k != "value"]
-            value = data['value'] + ";" if data['value'] else ""
-            
-            if not keys:
-                data_str = f"  {name},{value}\n"
-                return data_str
-            else:
-                if self._dict_depth(data) == 2:
-                    data_str = f"  {name},{value}\n"
-                    keys = [k for k in data.keys() if k != "type" and k != "value"]
-                    data_str += _get_keys(keys)
-                    return data_str
-                else:
-                    data_str = ""
-                    for key in keys:
-                        data_str += f"  {name},{value}\n"
-                        data_str += self._dict2str(data[key], key) + "\n"
-                    return data_str
-        
-        elif data['type'] == "Sub_Group":
-            keys = [k for k in data.keys() if k != "type" and k != "value"]
-            data_str = f"    {name},    !- name\n"
-            data_str += _get_keys(keys)
-            return data_str
-        
-    def _dict_depth(self, data:dict):
-        max_depth = 0
-        if not isinstance(data, dict) or not data:
-            return 0
-        
-        for value in data.values():
-            if isinstance(value, dict):
-                sub_depth = self._dict_depth(value)
-                max_depth = max(max_depth, sub_depth)
-        return max_depth + 1
+        return {'content': idf_data, 'filename': filename.strip(".json")}
 
+    def _combine_programline(self, obj: dict) -> str:
+        idf_data = ""
+        if not obj['programline']:
+            return idf_data
+        
+        else:
+            programline = obj['programline']
+            note = obj['note']
+            units = obj['units']
 
+            for i, value in enumerate(programline):
+                sign = "," if i != len(programline) - 1 else ";"
+                idf_data += f"    {value}{sign}    !- {note[i]}{units[i]}\n"
+            return idf_data
 
     def to_idf(self):
         if not self.json_files:
             raise ValueError("No json files found")
-        data_dict_list = [self._json2dict(f) for f in self.json_files]
-        for data_dict in data_dict_list:
-            idf_data = self._dict2idf(data_dict)
-            with open(f"{OUTPUT_PATH}/{data_dict['Root']['value']}.idf", "w") as f:
-                f.write(idf_data)
+        idf_data_list = [self._json2idf(f) for f in self.json_files]
+        for idf_data in idf_data_list:
+            with open(f"{OUTPUT_PATH}/{idf_data['filename']}.idf", "w") as f:
+                f.write(idf_data['content'])
     
     def to_json(self):
         if not self.idf_files:
             raise ValueError("No idf files found")
         data_dict_list = [self._idf2dict(f) for f in self.idf_files]
         for data_dict in data_dict_list:
-            with open(f"{OUTPUT_PATH}/{data_dict['Root']['value']}.json", "w") as f:
+            with open(f"{OUTPUT_PATH}/{data_dict['filename']}.json", "w") as f:
                 json.dump(data_dict, f)
 
 

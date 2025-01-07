@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "eppy>=0.5.63",
     "google-generativeai>=0.8.3",
     "pandas>=2.2.3",
     "python-dotenv>=1.0.1",
