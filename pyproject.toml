@@ -7,6 +7,7 @@ requires-python = ">=3.11"
 dependencies = [
     "eppy>=0.5.63",
     "google-generativeai>=0.8.3",
+    "gradio>=5.11.0",
     "pandas>=2.2.3",
     "python-dotenv>=1.0.1",
     "supabase>=2.11.0",
