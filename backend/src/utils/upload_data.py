@@ -26,7 +26,7 @@ class Database_Operation:
                     data = json.load(file)
                 response = self.client.table('IDF_DATA').insert({
                     'filename': json_file.strip('.json'),
-                    'data': data['objects']
+                    'objects': data['objects']
                 }).execute()
                 print(f"Successfully uploaded {json_file} to Supabase")
             except Exception as e:
@@ -38,7 +38,7 @@ class Database_Operation:
                 data_dict = self.dp._idf2dict(idf_file)
                 response = self.client.table('IDF_DATA').insert({
                     'filename': data_dict['filename'].strip('.idf'),
-                    'data': data_dict['objects']
+                    'objects': data_dict['objects']
                 }).execute()
                 print(f"Successfully uploaded {idf_file} to Supabase")
             except Exception as e:

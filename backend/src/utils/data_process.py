@@ -86,10 +86,7 @@ class DataProcess:
         
         return data_dict
 
-    def _json2idf(self, filename: str) -> str:
-        with open(os.path.join(DATA_PATH, filename), "r") as f:
-            data = json.load(f)
-        
+    def _json2idf(self, filename: str, data: dict) -> str:
         idf_data = ""
 
         for obj in data['objects']:
@@ -118,7 +115,11 @@ class DataProcess:
     def to_idf(self):
         if not self.json_files:
             raise ValueError("No json files found")
-        idf_data_list = [self._json2idf(f) for f in self.json_files]
+        idf_data_list = []
+        for filename in self.json_files:
+            with open(os.path.join(DATA_PATH, filename), "r") as f:
+                data = json.load(f)
+            idf_data_list = [self._json2idf(filename, data) for f in self.json_files]
         for idf_data in idf_data_list:
             with open(f"{OUTPUT_PATH}/{idf_data['filename']}.idf", "w") as f:
                 f.write(idf_data['content'])
