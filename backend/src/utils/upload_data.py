@@ -2,7 +2,7 @@ import os
 import json
 from supabase import Client, create_client
 from dotenv import load_dotenv
-from src.utils.data_process import DataProcess
+from .data_process import DataProcess
 
 
 load_dotenv()
