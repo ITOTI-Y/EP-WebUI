@@ -39,41 +39,40 @@ function SingleIDFObjectEditor({ obj, onChange }) {
         <div style={{ border: "1px solid #ccc", padding: 12, marginBottom: 12 }}>
         <div style={{ marginBottom: 8 }}>
         <label>Type: </label>
-        <input
-            type="text"
-            defaultValue={obj.type || ""}
-            style={{ marginRight: 20 }}
-        />
+        <span style={{ marginRight: 20 }}>{obj.type || ""}</span>
 
-        <label>Value: </label>
-        <input
-            type="text"
-            value={obj.value || ""}
-            onChange={handleValueChange}
-            style={{ marginRight: 20 }}
-        />
+        {obj.value && (
+            <>
+            <label>Value: </label>
+            <input
+                type="text"
+                value={obj.value}
+                onChange={handleValueChange}
+                style={{ marginRight: 20 }}
+            />
+            </>
+        )}
 
         {obj.name !== undefined && (
             <>
             <label>Name: </label>
-            <input
-                type="text"
-                defaultValue={obj.name || ""}
-            />
+            <span style={{ marginRight: 20 }}>{obj.name || ""}</span>
             </>
         )}
         </div>
 
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-        <thead>
-            <tr>
-            <th style={thStyle}>Note</th>
-            <th style={thStyle}>Value</th>
-            <th style={thStyle}>Unit</th>
-            </tr>
-        </thead>
-        <tbody>{renderTableRows()}</tbody>
-        </table>
+        {renderTableRows().length > 0 && (
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead>
+                <tr>
+                <th style={thStyle}>Note</th>
+                <th style={thStyle}>Value</th>
+                <th style={thStyle}>Unit</th>
+                </tr>
+            </thead>
+            <tbody>{renderTableRows()}</tbody>
+            </table>
+        )}
     </div>
     )
 }
