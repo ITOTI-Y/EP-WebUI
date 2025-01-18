@@ -1,101 +1,47 @@
-"use client"
+'use client'
 
-import { useEffect, useState } from "react";
-import IDFobjectEditor from "./compnents/IDFobjectEditor";
+import { useState } from 'react'
+import {
+    Dialog,
+    DialogPanel,
+    Disclosure,
+    DisclosureButton,
+    DisclosurePanel,
+    Popover,
+    PopoverButton,
+    PopoverGroup,
+    PopoverPanel,
+} from '@headlessui/react'
+import {
+    ArrowPathIcon,
+    Bars3Icon,
+    ChartPieIcon,
+    CursorArrowRaysIcon,
+    FingerPrintIcon,
+    SquaresPlusIcon,
+    XMarkIcon,
+} from '@heroicons/react/24/outline'
+import { ChevronDownIcon, PhoneIcon, PlayCircleIcon } from '@heroicons/react/20/solid'
+import { Navigation, MobileMenu } from './compnents/Navigation'
 
-export default function Home() {
-    // Save filenames from the backend
-    const [filenames, setFilenames] = useState([]);
+const products = [
+    { name: 'Analytics', description: 'Get a better understanding of your traffic', href: '#', icon: ChartPieIcon },
+    { name: 'Engagement', description: 'Speak directly to your customers', href: '#', icon: CursorArrowRaysIcon },
+    { name: 'Security', description: 'Your customers’ data will be safe and secure', href: '#', icon: FingerPrintIcon },
+    { name: 'Integrations', description: 'Connect with third-party tools', href: '#', icon: SquaresPlusIcon },
+    { name: 'Automations', description: 'Build strategic funnels that will convert', href: '#', icon: ArrowPathIcon },
+]
+const callsToAction = [
+    { name: 'Watch demo', href: '#', icon: PlayCircleIcon },
+    { name: 'Contact sales', href: '#', icon: PhoneIcon },
+]
 
-    // The filename that the user selected from dropdown menu
-    const [selectedFile, setSelectedFile] = useState("");
-
-    // Use to display and edit the IDF file
-    const [idfData, setIdfData] = useState(null);
-
-    // Is loading
-    const [loading, setLoading] = useState(false);
-
-    // Is error
-    const [error, setErrorMsg] = useState("");
-
-    // Call /api/idf-files to get the list of filenames
-    useEffect(() => {
-        async function fetchFilenames() {
-            try {
-                const res = await fetch("http://localhost:8000/api/idf-files");
-                if (!res.ok) {
-                    throw new Error("Failed to fetch filenames");
-                }
-                const data = await res.json();
-                setFilenames(data.filenames);
-            } catch (error) {
-                setErrorMsg(error.message);
-            }
-        }
-        fetchFilenames();
-    }, []); // Empty array means this effect runs only once when the component mounts
-
-    // When click "Import" button , fetch the specific filename idf file
-    async function handleImport() {
-        if (!selectedFile) {
-            alert("Please select a file from the dropdown menu");
-            return;
-        }
-        setLoading(true);
-        setErrorMsg("");
-
-        try {
-            const res = await fetch(`
-                http://localhost:8000/api/idf-files/${encodeURIComponent(selectedFile)}`
-            );
-            if (!res.ok) {
-                throw new Error(`Failed to import IDF for file: ${selectedFile}`);
-            }
-            const data = await res.json();
-            // data => { filename: "XXX", objects: [...]}
-            setIdfData(data.objects);
-        } catch (error) {
-            setErrorMsg(error.message);
-        } finally {
-            setLoading(false);
-        }
-    }
+export default function Example() {
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
     return (
-        <div style={{ margin: "20px" }}>
-            <h1>EnergyPlus Templates Import (Next.js)</h1>
-
-            {/* Display the error message (if any) */}
-            {error && <p style={{ color: "red" }}>Error: {error}</p>}
-            
-            {/* Display the dropdown menu */}
-            <div sytle={{ marginBottom:10 }}>
-                <label>Select IDF File:</label>
-                <select 
-                    value={selectedFile}
-                    onChange={(e) => setSelectedFile(e.target.value)}
-                    style={{ width: 200}}
-                >
-                    <option value="">--Select a file--</option>
-                    {filenames.map((fname) => (
-                        <option key={fname} value={fname}>
-                            {fname}
-                        </option>
-                    ))}
-                </select>
-
-                <button onClick={handleImport} style={{ marginLeft: 10}} disabled={!selectedFile || loading}>
-                    {loading ? "Importing..." : "Import"}
-                </button>
-            </div>
-
-            {/* Display the IDF file (if any) */}
-            {idfData && (
-                <div style={{ margin: 20 }}>
-                    <IDFobjectEditor objects={idfData} />
-                </div>
-            )}
-        </div>
+        <header className="bg-white">
+            <Navigation />
+        </header>
     )
 }
