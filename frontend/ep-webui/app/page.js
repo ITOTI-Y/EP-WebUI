@@ -22,7 +22,8 @@ import {
     XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { ChevronDownIcon, PhoneIcon, PlayCircleIcon } from '@heroicons/react/20/solid'
-import { Navigation, MobileMenu } from './compnents/Navigation'
+import Sidebar from './compnents/Sidebar'
+import IDFobjectEditor from './compnents/IDFobjectEditor'
 
 const products = [
     { name: 'Analytics', description: 'Get a better understanding of your traffic', href: '#', icon: ChartPieIcon },
@@ -37,11 +38,17 @@ const callsToAction = [
 ]
 
 export default function Example() {
-    const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
     return (
-        <header className="bg-white">
-            <Navigation />
-        </header>
+        <html className="h-full bg-white">
+            <body className="h-full">
+                <Sidebar />
+                <main className="py-10 lg:pl-72">
+                    <div className="px-4 sm:px-6 lg:px-8">
+                        <IDFobjectEditor />
+                    </div>
+                </main>
+            </body>
+        </html>
     )
 }

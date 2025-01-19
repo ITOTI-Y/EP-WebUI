@@ -1,4 +1,5 @@
 import { useState } from "react";
+import FileSelector from "./FileSelector";
 
 function SingleIDFObjectEditor({ obj, onChange }) {
     const [expanded, setExpanded] = useState(false);
@@ -90,37 +91,10 @@ function SingleIDFObjectEditor({ obj, onChange }) {
     );
 }
 
-export default function IDFobjectEditor({ objects }) {
-    const [idfArray, setIdfArray] = useState(objects);
-
-    function handleSingleObjectChange(i, updateObj) {
-        const newArray = [...idfArray];
-        newArray[i] = updateObj;
-        setIdfArray(newArray);
-    }
-
+export default function IDFobjectEditor() {
     return (
-        <div style={{ margin: 20 }}>
-            <h2>IDF Editor (Array of Objects)</h2>
-
-            {idfArray.map((obj, i) => (
-                <SingleIDFObjectEditor
-                    key={i}
-                    obj={obj}
-                    onChange={(updated) => handleSingleObjectChange(i, updated)}
-                />
-            ))}
+        <div>
+            <FileSelector />
         </div>
-    );
+    )
 }
-
-const thStyle = {
-    border: "1px solid #ccc",
-    background: "#f9f9f9",
-    padding: 4
-};
-
-const tdStyle = {
-    border: "1px solid #ccc",
-    padding: 4
-};

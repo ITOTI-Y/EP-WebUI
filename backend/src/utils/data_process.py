@@ -95,7 +95,7 @@ class DataProcess:
             idf_data += self._combine_programline(obj)
             idf_data += "\n"
         
-        return {'content': idf_data, 'filename': filename.strip(".json")}
+        return {'objects': idf_data, 'filename': filename.strip(".json")}
 
     def _combine_programline(self, obj: dict) -> str:
         idf_data = ""
@@ -122,7 +122,7 @@ class DataProcess:
             idf_data_list = [self._json2idf(filename, data) for f in self.json_files]
         for idf_data in idf_data_list:
             with open(f"{OUTPUT_PATH}/{idf_data['filename']}.idf", "w") as f:
-                f.write(idf_data['content'])
+                f.write(idf_data['objects'])
     
     def to_json(self):
         if not self.idf_files:
