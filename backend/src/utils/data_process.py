@@ -40,9 +40,10 @@ class DataProcess:
         except PermissionError:
             raise PermissionError(f"No permission to access the {DATA_PATH}")
 
-    def _idf2dict(self, filename: str):
-        with open(os.path.join(DATA_PATH, filename), "r") as f:
-            data = f.read()
+    def _idf2dict(self, filename: str, data: str = None):
+        if not data:
+            with open(os.path.join(DATA_PATH, filename), "r") as f:
+                data = f.read()
         
         pattern = re.compile(r"(?:^ {2})([^\s,;!]+)(?:,([^;]+);$)?"
                              r"|^ {4}(.*)[,;]\s*!- ([^{}\n]+)(?:{([^{}]+)})?",
@@ -85,6 +86,45 @@ class DataProcess:
                 data_dict['objects'][-1]['units'].append(sub_unit if sub_unit else '')
         
         return data_dict
+    
+    def _dict_process(self, data_dict: dict) -> dict:
+        result = {}
+        type_list = []
+        for obj in data_dict['objects']:
+            if obj['type'] not in type_list:
+                type_list.append(obj['type'])
+        
+        for t in type_list:
+            temp = []
+            id_count = 0
+            for obj in data_dict['objects']:
+                if obj['type'] == t:
+                    temp.append({
+                        'id': id_count,
+                        'value': obj['value'],
+                        'name': obj['name'],
+                        'note': obj['note'],
+                        'programline': obj['programline'],
+                        'units': obj['units']
+                    })
+                    id_count += 1
+            result[t] = temp
+
+        return result
+    
+    def _process_dict_rollback(self, data_dict: dict):
+        result = []
+        for t in data_dict.keys():
+            for obj in data_dict[t]:
+                result.append({
+                    'type': t,
+                    'value': obj['value'],
+                    'name': obj['name'],
+                    'note': obj['note'],
+                    'programline': obj['programline'],
+                    'units': obj['units']
+                })
+        return result
 
     def _json2idf(self, filename: str, data: dict) -> str:
         idf_data = ""

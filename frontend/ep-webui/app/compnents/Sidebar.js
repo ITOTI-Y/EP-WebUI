@@ -1,19 +1,19 @@
 'use client'
+import Link from 'next/link'
 import { useState } from "react";
 import { Dialog, DialogBackdrop, DialogPanel, TransitionChild } from '@headlessui/react'
 import {
     Bars3Icon,
-    CalendarIcon,
-    ChartPieIcon,
-    DocumentDuplicateIcon,
-    FolderIcon,
-    HomeIcon,
-    UsersIcon,
     XMarkIcon,
+    CubeIcon,
+    ComputerDesktopIcon,
+    ChartBarIcon,
 } from '@heroicons/react/24/outline'
 
 const navigation = [
-    { name: 'IDF Editor', href: '#', icon: FolderIcon },
+    { name: 'IDF Editor', href: '/idf-editor', icon: CubeIcon },
+    { name: 'Simulation', href: '/simulation', icon: ComputerDesktopIcon },
+    { name: 'Results Analysis', href: '/result', icon: ChartBarIcon },
 ]
 
 function classNames(...classes) {
@@ -37,7 +37,11 @@ export default function Sidebar() {
                     >
                         <TransitionChild>
                             <div className="absolute left-full top-0 flex w-16 justify-center pt-5 duration-300 ease-in-out data-[closed]:opacity-0">
-                                <button type="button" onClick={() => setSidebarOpen(false)} className="-m-2.5 p-2.5">
+                                <button
+                                    type="button"
+                                    onClick={() => setSidebarOpen(false)}
+                                    className="-m-2.5 p-2.5"
+                                >
                                     <span className="sr-only">Close sidebar</span>
                                     <XMarkIcon aria-hidden="true" className="size-6 text-white" />
                                 </button>
@@ -57,7 +61,7 @@ export default function Sidebar() {
                                         <ul role="list" className="-mx-2 space-y-1">
                                             {navigation.map((item) => (
                                                 <li key={item.name}>
-                                                    <a
+                                                    <Link
                                                         href={item.href}
                                                         className={classNames(
                                                             item.current
@@ -69,12 +73,14 @@ export default function Sidebar() {
                                                         <item.icon
                                                             aria-hidden="true"
                                                             className={classNames(
-                                                                item.current ? 'text-indigo-600' : 'text-gray-400 group-hover:text-indigo-600',
+                                                                item.current
+                                                                    ? 'text-indigo-600'
+                                                                    : 'text-gray-400 group-hover:text-indigo-600',
                                                                 'size-6 shrink-0',
                                                             )}
                                                         />
                                                         {item.name}
-                                                    </a>
+                                                    </Link>
                                                 </li>
                                             ))}
                                         </ul>
@@ -100,7 +106,7 @@ export default function Sidebar() {
                                 <ul role="list" className="-mx-2 space-y-1">
                                     {navigation.map((item) => (
                                         <li key={item.name}>
-                                            <a
+                                            <Link
                                                 href={item.href}
                                                 className={classNames(
                                                     item.current
@@ -112,50 +118,55 @@ export default function Sidebar() {
                                                 <item.icon
                                                     aria-hidden="true"
                                                     className={classNames(
-                                                        item.current ? 'text-indigo-600' : 'text-gray-400 group-hover:text-indigo-600',
+                                                        item.current
+                                                            ? 'text-indigo-600'
+                                                            : 'text-gray-400 group-hover:text-indigo-600',
                                                         'size-6 shrink-0',
                                                     )}
                                                 />
                                                 {item.name}
-                                            </a>
+                                            </Link>
                                         </li>
                                     ))}
                                 </ul>
                             </li>
                             <li className="-mx-6 mt-auto">
-                                <a
+                                <Link
                                     href="#"
                                     className="flex items-center gap-x-4 px-6 py-3 text-sm/6 font-semibold text-gray-900 hover:bg-gray-50"
                                 >
                                     <img
                                         alt=""
-                                        src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
+                                        src="https://file.chat-yu.net/hotlink-ok/avatar.png"
                                         className="size-8 rounded-full bg-gray-50"
                                     />
                                     <span className="sr-only">Your profile</span>
                                     <span aria-hidden="true">ZhenYu Pan</span>
-                                </a>
+                                </Link>
                             </li>
                         </ul>
                     </nav>
                 </div>
             </div>
             <div className="sticky top-0 z-40 flex items-center gap-x-6 bg-white px-4 py-4 shadow-sm sm:px-6 lg:hidden">
-                <button type="button" onClick={() => setSidebarOpen(true)} className="-m-2.5 p-2.5 text-gray-700 lg:hidden">
+                <button
+                    type="button"
+                    onClick={() => setSidebarOpen(true)}
+                    className="-m-2.5 p-2.5 text-gray-700 lg:hidden"
+                >
                     <span className="sr-only">Open sidebar</span>
                     <Bars3Icon aria-hidden="true" className="size-6" />
                 </button>
                 <div className="flex-1 text-sm/6 font-semibold text-gray-900">IDF Editor</div>
-                <a href="#">
+                <Link href="#">
                     <span className="sr-only">Your profile</span>
                     <img
                         alt=""
-                        src="https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80"
+                        src="https://file.chat-yu.net/hotlink-ok/avatar.png"
                         className="size-8 rounded-full bg-gray-50"
                     />
-                </a>
+                </Link>
             </div>
-
         </div>
     )
 }

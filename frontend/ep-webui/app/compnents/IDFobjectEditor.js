@@ -1,100 +1,63 @@
 import { useState } from "react";
-import FileSelector from "./FileSelector";
-
-function SingleIDFObjectEditor({ obj, onChange }) {
-    const [expanded, setExpanded] = useState(false);
-
-    function handleValueChange(e) {
-        const newObj = { ...obj, value: e.target.value };
-        onChange(newObj);
-    }
-
-    function handleProgramlineChange(i, newVal) {
-        const newProgramline = [...obj.programline];
-        newProgramline[i] = newVal;
-        const newObj = { ...obj, programline: newProgramline };
-        onChange(newObj);
-    }
-
-    function renderTableRows() {
-        const { note = [], programline = [], units = [] } = obj;
-
-        return note.map((noteText, i) => (
-            <tr key={i}>
-                {/* Note */}
-                <td style={tdStyle}>{noteText}</td>
-                {/* Programline */}
-                <td style={tdStyle}>
-                    <input
-                        type="text"
-                        value={programline[i] || ""}
-                        onChange={(e) => handleProgramlineChange(i, e.target.value)}
-                        style={{ width: "100%" }}
-                    />
-                </td>
-                {/* Units */}
-                <td style={tdStyle}>{units[i] || ""}</td>
-            </tr>
-        ));
-    }
-
-    return (
-        <div style={{ border: "1px solid #ccc", marginBottom: 12 }}>
-            {/* 点击切换折叠/展开 */}
-            <div
-                onClick={() => setExpanded(!expanded)}
-                style={{
-                    cursor: "pointer",
-                    background: "#f2f2f2",
-                    padding: 8
-                }}
-            >
-                <strong>Type: {obj.type || ""}</strong>
-            </div>
-
-            {expanded && (
-                <div style={{ padding: 12 }}>
-                    {obj.value && (
-                        <div style={{ marginBottom: 8 }}>
-                            <label>Value: </label>
-                            <input
-                                type="text"
-                                value={obj.value || ""}
-                                onChange={handleValueChange}
-                                style={{ marginRight: 20 }}
-                            />
-                        </div>
-                    )}
-
-                    {obj.name !== "" && (
-                        <div style={{ marginBottom: 8 }}>
-                            <label>Name: </label>
-                            <span style={{ marginRight: 20 }}>{obj.name || ""}</span>
-                        </div>
-                    )}
-
-                    {renderTableRows().length > 0 && (
-                        <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                            <thead>
-                                <tr>
-                                    <th style={thStyle}>Note</th>
-                                    <th style={thStyle}>Value</th>
-                                    <th style={thStyle}>Unit</th>
-                                </tr>
-                            </thead>
-                            <tbody>{renderTableRows()}</tbody>
-                        </table>
-                    )}
-                </div>
-            )}
-        </div>
-    );
-}
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
+import { Listbox, ListboxButton, ListboxLabel, ListboxOption, ListboxOptions } from "./listbox";
+import { useGetFilename, useGetIDFData } from "../hooks/usedata";
+import SaveButton from "./savebutton";
 
 export default function IDFobjectEditor() {
+    const [filenames, error] = useGetFilename();
+    const [selectedFilename, setSelectedFilename] = useState(null);
+    const [idfData, errorIDFData] = useGetIDFData(selectedFilename);
+
+    if (error) {
+        console.log("获取文件列表时出现错误：", error);
+    }
+    if (errorIDFData) {
+        console.log("获取 IDF 数据时出现错误：", errorIDFData);
+    }
+
+    function handleFilenameChange(filenameObj) {
+        // 当用户在下拉列表中选择了某个文件时，更新 selectedFilename
+        setSelectedFilename(filenameObj.name);
+    }
+
     return (
         <div>
-            <FileSelector />
+            <div className="flex items-end justify-between gap-4">
+                <div className="w-1/3">
+                    <label htmlFor="filename" className="py-2 text-sm font-medium text-gray-700">
+                        Filename
+                    </label>
+                    <div>
+                        <Listbox onChange={handleFilenameChange}>
+                            {filenames && filenames.map(nameObj => (
+                                <ListboxOption key={nameObj.id} value={nameObj}>
+                                    <ListboxLabel>{nameObj.name}</ListboxLabel>
+                                </ListboxOption>
+                            ))}
+                        </Listbox>
+                    </div>
+                </div>
+                <SaveButton />
+            </div>
+
+            {/* 可以根据 idfData 在此处渲染相应的内容 */}
+            <Table>
+                <TableHead>
+                    <TableRow>
+                        <TableHeader>Type</TableHeader>
+                        <TableHeader>Unit</TableHeader>
+                    </TableRow>
+                </TableHead>
+                <TableBody>
+                    {idfData && idfData.map((item, index) => (
+                        <TableRow key={index}>
+                            <TableCell>{item.type}</TableCell>
+                            <TableCell>{item.unit}</TableCell>
+                        </TableRow>
+                    ))}
+                </TableBody>
+            </Table>
         </div>
-    )
+    );
 }
