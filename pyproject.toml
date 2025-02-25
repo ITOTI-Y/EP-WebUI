@@ -12,5 +12,6 @@ dependencies = [
     "pandas>=2.2.3",
     "pydantic>=2.10.4",
     "python-dotenv>=1.0.1",
+    "scipy>=1.15.2",
     "supabase>=2.11.0",
 ]

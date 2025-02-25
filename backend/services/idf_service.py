@@ -3,9 +3,13 @@
 import os
 import uuid
 import pathlib
+from dotenv import load_dotenv
 from fastapi import UploadFile, HTTPException
 from eppy.modeleditor import IDF
 from io import BytesIO
+
+load_dotenv()
+temp_dir = pathlib.Path(os.getenv("TEMP_DIR"))
 
 IDD_FILE = pathlib.Path(__file__).parent.parent.parent / "data" / "Energy+.idd"
 IDF.setiddname(IDD_FILE)
@@ -20,7 +24,7 @@ async def save_idf_file(file: UploadFile):
         idf_id = str(uuid.uuid4())
         file_content = await file.read()
 
-        tmp_path = pathlib.Path(__file__).parent.parent / "temp" / f"{idf_id}.idf"
+        tmp_path = temp_dir / f"{idf_id}.idf"
         with open(tmp_path, "wb") as f:
             f.write(file_content)
 

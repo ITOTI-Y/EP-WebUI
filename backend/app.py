@@ -1,6 +1,9 @@
 # backend/app.py
-
+import subprocess
+import threading
+import pathlib
 import uvicorn
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, Form
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import HTTPException
@@ -8,11 +11,27 @@ from fastapi.exceptions import HTTPException
 # Import services modules
 from services import idf_service, geometry_service
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    frontend_thread = threading.Thread(target=start_frontend)
+    frontend_thread.daemon = True
+    frontend_thread.start()
+    print("Backend Started, Starting Frontend...")
+    yield
+
 app = FastAPI(
     title="EnergyPlus API",
     description="Provide IDF file process and geometry data extraction service",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan
 )
+
+
+def start_frontend():
+    frontend_path = pathlib.Path(__file__).parent.parent / "frontend" / "idf-editor"
+    print(f"Starting frontend at {frontend_path}")
+    subprocess.Popen(["npm", "run", "dev"],shell=True, cwd=frontend_path)
+
 
 # ---IDF File Upload---
 @app.post("/api/idf/upload")

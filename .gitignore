@@ -170,4 +170,6 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-temp/
+data/temp/
+data/test
+data/output/
