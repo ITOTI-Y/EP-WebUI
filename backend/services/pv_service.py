@@ -16,7 +16,20 @@ load_dotenv()
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR"))
 
 class PVAnalyzer:
+    """
+    Analyzes and simulates photovoltaic (PV) systems integrated into EnergyPlus IDF models.
+
+    This class handles adding PV systems to an IDF file based on suitable surfaces,
+    running the EnergyPlus simulation, and analyzing the PV energy production results.
+    """
     def __init__(self, idf_id: str, weather_file: str):
+        """
+        Initializes the PVAnalyzer.
+
+        Args:
+            idf_id: The identifier for the IDF model.
+            weather_file: The path to the EPW weather file for the simulation.
+        """
         self.idf_id = idf_id
         self.weather_file = weather_file
         self.idf_path = None
@@ -24,6 +37,12 @@ class PVAnalyzer:
         self.output_dir = None
 
     async def initialize(self):
+        """
+        Initializes necessary paths, IDF object, and output directory.
+
+        Retrieves the IDF file path and object, and creates the output directory
+        for simulation results.
+        """
         self.idf_path = await get_idf_path(self.idf_id)
         self.idf_obj = await get_idf_object(self.idf_id)
         self.output_dir = OUTPUT_DIR / f"output_{self.idf_id}"
@@ -31,7 +50,24 @@ class PVAnalyzer:
 
     async def add_pv_systems(self, suitable_surfaces: list[dict]):
         """
-            Add PV systems to the IDF file
+        Adds PV system objects to the IDF model based on suitable surfaces.
+
+        Creates Generator:Photovoltaic, PhotovoltaicPerformance:Simple,
+        and related ElectricLoadCenter objects in the IDF model for each
+        suitable surface provided. Also adds relevant output variables.
+
+        Args:
+            suitable_surfaces: A list of dictionaries, where each dictionary
+                               represents a suitable surface and must contain
+                               'name' (str) and 'area' (float) keys. May also
+                               contain 'radiation_score'.
+
+        Returns:
+            A dictionary containing the idf_id, a list of added pv_systems details,
+            and a success message.
+
+        Raises:
+            HTTPException: If an error occurs during the IDF modification process.
         """
         pv_efficiency = float(os.getenv("PV_EFFICIENCY"))
         pv_coverage = float(os.getenv("PV_COVERAGE"))
@@ -158,6 +194,19 @@ class PVAnalyzer:
             raise HTTPException(status_code=500, detail=f"Error when add pv systems: {str(e)}")
 
     async def run_pv_simulation(self):
+        """
+        Runs the EnergyPlus simulation with the modified IDF file.
+
+        Executes the simulation using the specified weather file and outputs
+        results to the designated output directory.
+
+        Returns:
+            A dictionary containing the idf_id, output directory path, and a
+            success message.
+
+        Raises:
+            HTTPException: If an error occurs during the simulation run.
+        """
         try:
             idf = IDF(self.idf_path, self.weather_file)
             run_functions.run(
@@ -179,7 +228,18 @@ class PVAnalyzer:
 
     async def analyze_pv_results(self):
         """
-            Analyze the results of the PV simulation
+        Analyzes the PV simulation results from the output CSV file.
+
+        Reads the 'pvout.csv' file, calculates total and monthly energy
+        production (kWh) and maximum power (kW) for each PV system.
+
+        Returns:
+            A dictionary containing detailed results per pv_system, the total
+            energy generated across all systems, and a success message.
+
+        Raises:
+            HTTPException: If the results CSV file ('pvout.csv') is not found
+                           or if an error occurs during analysis.
         """
         csv_path = self.output_dir / "pvout.csv"
         if not csv_path.exists():
@@ -225,10 +285,27 @@ class PVAnalyzer:
         }
     
     async def run(self, suitable_surfaces: list[dict]):
+        """
+        Executes the full PV analysis workflow.
+
+        Initializes the analyzer, adds PV systems to the IDF, runs the
+        simulation, and analyzes the results.
+
+        Args:
+            suitable_surfaces: A list of dictionaries defining suitable surfaces
+                               for PV installation (passed to add_pv_systems).
+
+        Returns:
+            The analysis results dictionary from analyze_pv_results.
+
+        Raises:
+            HTTPException: If any step in the workflow fails.
+        """
         try:
             await self.initialize()
             await self.add_pv_systems(suitable_surfaces)
             await self.run_pv_simulation()
             return await self.analyze_pv_results()
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Error when run pv simulation: {str(e)}")
+            # Reraise exception to be handled by the caller or FastAPI
+            raise HTTPException(status_code=500, detail=f"Error during PV analysis workflow: {str(e)}")

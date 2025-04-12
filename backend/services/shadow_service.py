@@ -1,4 +1,4 @@
-# backend/services/shadown_service.py
+# backend/services/shadow_service.py
 
 import os
 import numpy as np
@@ -18,6 +18,15 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR"))
 os.environ["ENERGYPLUS_DIR"] = os.getenv("ENERGY_PLUS_DIR")
 
 class ShadowAnalyzer:
+    """Analyzes EnergyPlus shadow simulation results to find suitable surfaces for PV installation.
+
+    Attributes:
+        idf_id: The identifier for the IDF model.
+        weather_file: Path to the EPW weather file.
+        idf_path: Path to the IDF file.
+        idf_obj: The eppy IDF object representation.
+        output_dir: Directory to store simulation results.
+    """
     def __init__(self, idf_id: str, weather_file: str):
         self.idf_id = idf_id
         self.weather_file = weather_file
@@ -26,14 +35,17 @@ class ShadowAnalyzer:
         self.output_dir = None
 
     async def initialize(self):
+        """Initializes the analyzer by setting paths and creating the output directory."""
         self.idf_path = await get_idf_path(self.idf_id)
         self.idf_obj = await get_idf_object(self.idf_id)
         self.output_dir = OUTPUT_DIR / f"output_{self.idf_id}"
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     async def add_shadow_outputs(self):
-        """
-        Add output variables for shadow calculation
+        """Adds required Output:Variable objects to the IDF for shadow analysis.
+
+        Ensures that variables related to incident solar radiation and sunlit
+        fraction/area are requested for hourly reporting if not already present.
         """
         output_variables = [
             "Surface Outside Face Incident Solar Radiation Rate per Area",
@@ -59,8 +71,16 @@ class ShadowAnalyzer:
         self.idf_obj.save()
 
     async def run_shadow_calculation(self):
-        """
-            Use Eppy to run the shadow calculation
+        """Runs the EnergyPlus simulation using eppy.
+
+        Executes the simulation with the specified IDF and weather file,
+        storing results in the designated output directory.
+
+        Returns:
+            A dictionary containing the idf_id, output directory path, and status.
+
+        Raises:
+            HTTPException: If the EnergyPlus simulation fails.
         """
         try:
             idf = IDF(self.idf_path, self.weather_file)
@@ -81,8 +101,21 @@ class ShadowAnalyzer:
             raise HTTPException(status_code=500, detail=f"Error running shadow calculation: {str(e)}")
         
     async def analyze_results(self):
-        """
-            Analyze shadow calculation results, find the surface that most suitable for PV installation
+        """Analyzes shadow calculation results to find suitable PV surfaces.
+
+        Reads the simulation output CSV, calculates radiation scores for
+        exterior surfaces defined by CALCULATION_TYPE, and identifies surfaces
+        exceeding the RADIATION_SCORE_THRESHOLD.
+
+        Returns:
+            A list of dictionaries, each representing a suitable surface, sorted
+            by radiation score in descending order. Each dictionary contains:
+            'name', 'radiation_score', 'area', 'annual_radiation', 'vertices'.
+
+        Raises:
+            HTTPException: If the results CSV is not found, no suitable surfaces
+                           are found, or another analysis error occurs.
+            FileNotFoundError: If the eplusout.csv file does not exist.
         """
         calculation_type = os.getenv("CALCULATION_TYPE")
         try:
@@ -137,11 +170,26 @@ class ShadowAnalyzer:
             return suitable_surfaces
             
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Shadow Calculation Error: {str(e)}")
+            # Re-raise FileNotFoundError specifically if needed, otherwise wrap
+            if isinstance(e, FileNotFoundError):
+                 raise HTTPException(status_code=500, detail=f"Shadow Analysis Error: {str(e)}")
+            elif isinstance(e, HTTPException):
+                 raise # Re-raise HTTP exceptions from inner logic
+            else:
+                 raise HTTPException(status_code=500, detail=f"Shadow Analysis Error: {str(e)}")
 
     def _calculate_radiation_score(self, annual_radiation: float) -> float:
-        """
-            Calculate the score for the surface based on the annual radiation
+        """Calculates a score based on annual incident solar radiation.
+
+        Linearly interpolates the score between MIN_SCORE and MAX_SCORE based
+        on whether the annual_radiation falls between RADIATION_THRESHOLD_LOW
+        and RADIATION_THRESHOLD_HIGH.
+
+        Args:
+            annual_radiation: Total annual incident solar radiation on the surface (in J or Wh depending on E+ output).
+
+        Returns:
+            The calculated radiation score (between MIN_SCORE and MAX_SCORE).
         """
         radiation_threshold_high = float(os.getenv("RADIATION_THRESHOLD_HIGH"))
         radiation_threshold_low = float(os.getenv("RADIATION_THRESHOLD_LOW"))
@@ -155,15 +203,14 @@ class ShadowAnalyzer:
         else:
             return min_score
         
-    def _calculate_area(self, points: list[list[float, float, float]]) -> float:
-        """
-            Calculate the area of the polygon
+    def _calculate_area(self, points: list[list[float]]) -> float:
+        """Calculates the area of a 3D polygon using the shoelace formula projection.
 
         Args:
-            points (list[list[float, float, float]]): The vertices of the polygon
+            points: A list of 3D vertex coordinates [[x1, y1, z1], [x2, y2, z2], ...].
 
         Returns:
-            float: The area of the polygon
+            The calculated area of the polygon in square meters (assuming coordinates are in meters).
         """
         points = np.array(points)
         if len(points) < 3:
@@ -176,8 +223,13 @@ class ShadowAnalyzer:
         return area
     
     async def run(self):
-        """
-            Run the shadow calculation
+        """Executes the complete shadow analysis workflow.
+
+        Initializes, adds necessary outputs, runs the simulation, and analyzes
+        the results to return suitable surfaces.
+
+        Returns:
+            A list of suitable surfaces as determined by analyze_results.
         """
         await self.initialize()
         await self.add_shadow_outputs()

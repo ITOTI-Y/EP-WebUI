@@ -5,8 +5,14 @@ from fastapi import HTTPException
 from .idf_service import get_idf_object, save_idf_file, MockUploadFile
 
 def extract_vertices(surface):
-    """
-    辅助函数：提取给定 surface 的所有顶点坐标
+    """Extracts vertex coordinates for a given surface object.
+
+    Args:
+        surface: An object representing a surface (e.g., BUILDING SURFACE:DETAILED).
+
+    Returns:
+        A list of lists, where each inner list contains the [x, y, z] coordinates
+        of a vertex.
     """
     num_vertices = int(surface.Number_of_Vertices)
     return [
@@ -19,13 +25,25 @@ def extract_vertices(surface):
     ]
 
 async def get_geometry_data(idf_id: str):
-    # 直接获取 idf_obj, 如有 HTTPException 则会自动上抛
+    """Retrieves geometric data from a specified IDF object.
+
+    Args:
+        idf_id: The unique identifier for the IDF object.
+
+    Returns:
+        A dictionary containing lists of zones, building surfaces, and
+        fenestration surfaces with their properties and vertices.
+
+    Raises:
+        HTTPException: If the IDF object cannot be retrieved.
+    """
+    # Retrieve IDF object; HTTPException is automatically propagated.
     idf_obj = await get_idf_object(idf_id)
 
-    # 使用列表推导式构造 zones 列表
+    # Build zones list.
     zones = [{"name": zone.Name} for zone in idf_obj.idfobjects["ZONE"]]
 
-    # 使用列表推导式构造 surfaces 列表，并借助辅助函数获取顶点
+    # Build surfaces list, extracting vertices using the helper function.
     surfaces = [
         {
             "name": surface.Name, # string
@@ -37,6 +55,7 @@ async def get_geometry_data(idf_id: str):
         for surface in idf_obj.idfobjects["BUILDINGSURFACE:DETAILED"]
     ]
 
+    # Build fenestration surfaces list.
     fenestration_surfaces = [
         {
             "name": surface.Name, # string
@@ -47,15 +66,15 @@ async def get_geometry_data(idf_id: str):
     ]
 
     geometry_data = {"zones": zones, "surfaces": surfaces, "fenestration_surfaces": fenestration_surfaces}
-    
+
     return geometry_data
 
-
+# Main execution block for testing.
 if __name__ == "__main__":
     import asyncio
     import pathlib
     async def main_test_geometry():
-        # 简化测试流程
+        # Simplified test setup.
         test_idf_path = pathlib.Path(__file__).parent.parent.parent / "data" / "test.idf"
         if not test_idf_path.exists():
             raise FileNotFoundError(f"Test IDF file not found at {test_idf_path}")
@@ -67,8 +86,9 @@ if __name__ == "__main__":
 
         try:
             geometry_data = await get_geometry_data(test_idf_id)
-            print(geometry_data)  # 输出结果便于查看
+            # Print results for verification.
+            print(geometry_data)
         except HTTPException as e:
             print(f"HTTPException: {e}")
-    
+
     asyncio.run(main_test_geometry())

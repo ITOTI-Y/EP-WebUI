@@ -4,12 +4,12 @@ import threading
 import pathlib
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, Form
+from fastapi import FastAPI, UploadFile, Form, Request, HTTPException
 from fastapi.responses import JSONResponse
-from fastapi.exceptions import HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 # Import services modules
-from services import idf_service, geometry_service
+from services import idf_service, geometry_service, pv_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -80,6 +80,33 @@ async def get_geometry(idf_id: str):
             status_code=500,
             content={"message": "Failed to extract geometry data"}
         )
+
+# ---PV Calculation---
+@app.post("/api/pv/calculate")
+async def calculate_pv(request: Request):
+    try:
+        data = await request.json()
+        idf_id = data.get("idf_id")
+        surfaces = data.get("surfaces", [])
+        weather_file = data.get("weather_file", "USA_CA_San.Francisco.Intl.AP.724940_TMY3.epw")
+        
+        if not idf_id:
+            raise HTTPException(status_code=400, detail="Missing idf_id parameter")
+            
+        if not surfaces:
+            raise HTTPException(status_code=400, detail="No surfaces provided for PV calculation")
+        
+        # Initialize PV analyzer and run calculation
+        analyzer = pv_service.PVAnalyzer(idf_id, weather_file)
+        results = await analyzer.run(surfaces)
+        
+        return results
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error calculating PV output: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to calculate PV output: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
