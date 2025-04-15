@@ -9,9 +9,13 @@ dependencies = [
     "eppy>=0.5.63",
     "fastapi[standard]>=0.115.6",
     "google-generativeai>=0.8.3",
+    "joblib>=1.4.2",
     "pandas>=2.2.3",
     "pydantic>=2.10.4",
     "python-dotenv>=1.0.1",
+    "salib>=1.5.1",
+    "scikit-learn>=1.6.1",
     "scipy>=1.15.2",
+    "statsmodels>=0.14.4",
     "supabase>=2.11.0",
 ]

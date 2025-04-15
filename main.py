@@ -1,21 +1,28 @@
-from fastapi import FastAPI
-from backend.src.utils.upload_data import Database_Operation
-from backend.src.routers.idf_routes import *
-import uvicorn
+import logging
+from backend.services.optimization_service import OptimizationPipeline
+from config import CONFIG
 
-app = FastAPI()
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-app.include_router(router)
+logging.basicConfig(level=logging.INFO)
+
+def main():
+    target_cities = ['Chicago']
+    target_ssps = [126]
+    target_btypes = ['Office_Small']
+
+    logging.info("Starting optimization process...")
+    logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
+    logging.info(f"EnergyPlus executable path = '{CONFIG['paths']['eplus_executable']}'")
+
+    for city in target_cities:
+        for ssp in target_ssps:
+            for btype in target_btypes:
+                try:
+                    pipeline = OptimizationPipeline(city, ssp, btype, CONFIG)
+                    pipeline.run_baseline_simulation()
+                except Exception as e:
+                    logging.error(f"Error occurred for {city}, SSP {ssp}, Btype {btype}: {e}")
+
+    logging.info("Optimization process completed successfully.")
 
 if __name__ == "__main__":
-    db_op = Database_Operation()
-    db_op.upload_all()
-    # uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
-    # data = get_idf_data("1Zone")
-    # run_simulation("1", data, "weather")
+    main()
