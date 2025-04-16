@@ -75,6 +75,7 @@ class EnergyPlusRunner:
                 idf_object,
                 weather=weather_path,
                 output_directory=output_dir,
+                output_prefix=output_prefix,
                 output_suffix=output_suffix,
                 verbose='v',
                 readvars=True, # It will generate .csv files from .eso files
@@ -115,8 +116,7 @@ class EnergyPlusRunner:
                 for filename in os.listdir(output_dir):
                     if any(filename.lower().endswith(ext) for ext in cleanup_extensions) and \
                         not filename.lower().endswith('.csv') and \
-                        not filename.lower().endswith('.idf') and \
-                        run_name not in filename:
+                        not filename.lower().endswith('.idf'):
                         try:
                              file_to_remove = output_dir / filename
                              if os.path.isfile(file_to_remove):
@@ -151,8 +151,102 @@ class SimulationResult:
         if not os.path.exists(self.meter_csv_path):
             logging.warning(f"Meter CSV file not found at {self.meter_csv_path}")
     
-    def get_meter_data(self,  columns_map=None, year=None):
-        pass
+    def get_meter_data(self,  columns_map:dict =None, year:int =None) -> pd.DataFrame:
+        """
+        Load and parse the Meter CSV file
 
-    def get_source_eui(self, ng_conversion_factor: float):
-        pass
+        Args:
+            columns_map (dict, optional): A dictionary mapping column names to new names. Defaults to None.
+            year (int, optional): The year to filter the data by. Defaults to None.
+
+        Returns:
+            pd.DataFrame: A pandas DataFrame containing the meter data
+        """
+        if not os.path.exists(self.meter_csv_path):
+            logging.warning(f"Meter CSV file not found at {self.meter_csv_path}")
+            return None
+        try:
+            df = pd.read_csv(self.meter_csv_path)
+
+            if "Date/Time" in df.columns:
+                # Process the "Date/Time" column, remove the space and convert to datetime
+                pass
+        except Exception as e:
+            return None
+
+    def get_source_eui(self, ng_conversion_factor: float) -> float:
+        """
+        Extract the source EUI from the "Table.csv" file.
+
+        Args:
+            ng_conversion_factor (float): The conversion factor for natural gas to energy.
+
+        Returns:
+            float: The source EUI (kWh/m2/yr) or None if the source EUI is not found.
+        """
+        if not os.path.exists(self.table_csv_path):
+            logging.warning(f"Table CSV file not found at {self.table_csv_path}")
+            return None
+        target_section_start = "REPORT:,Annual Building Utility Performance Summary".lower()
+        target_data_row_start = ",Total Source Energy,".lower()
+        target_column_header = "Energy Per Total Building Area [kWh/m2]".lower()
+        
+        # Row above the data rows that serves as the header row indicator (used for locating target column indices).
+        header_row_start = ",,Total Energy [kWh]".lower()
+
+        in_target_section = False
+        header_found = False
+        target_col_index = -1
+
+        try:
+            with open(self.table_csv_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            for line in lines:
+                line_processed = line.strip().lower()
+
+                # Check if the current line indicates the start of the target section
+                if target_section_start in line_processed:
+                    in_target_section = True
+                    continue
+                
+                if not in_target_section:
+                    continue
+                
+                if not header_found and line_processed.startswith(header_row_start):
+                    header_parts = [h.strip() for h in line_processed.split(',')]
+                    try:
+                        target_col_index = header_parts.index(target_column_header)
+                        header_found = True
+                    except ValueError:
+                        logging.warning(f"Target column header '{target_column_header}' not found in the header row.")
+                        return None
+                    continue
+                
+                if header_found and line_processed.startswith(target_data_row_start):
+                    data_parts = [p.strip() for p in line_processed.split(',')]
+                    logging.info(f"DEBUG: Found data row: {data_parts}")
+                    if len(data_parts) > target_col_index:
+                        try:
+                            source_eui_str = data_parts[target_col_index]
+                            source_eui = float(source_eui_str)
+                            logging.info(f"DEBUG: Extracted Source EUI string: '{source_eui_str}', float: {source_eui}")
+                            return source_eui
+                        except ValueError:
+                            logging.warning(f"Failed to convert source EUI string '{source_eui_str}' to float.")
+                            return None
+                    else:
+                        logging.error(f"Error: The target dataset has {len(data_parts)} columns, which is insufficient to retrieve the value at index {target_col_index}. Offending line: {line_processed}")
+                        return None
+            # If the loop completes without a match.
+            if target_col_index == -1:
+                logging.error(f"Warning: Unable to locate the header row, '{header_row_start}', within the '{target_section_start}' section of '{self.table_csv_path}'.")
+            else:
+                logging.error(f"Warning: Unable to locate the data row, '{target_data_row_start}', within the '{target_section_start}' section of '{self.table_csv_path}'.")
+            return None
+        except FileNotFoundError as e:
+            logging.error(f"Error: File not found: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Error: Unexpected error occurred while processing the table CSV file: {e}")
+            return None

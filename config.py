@@ -62,6 +62,8 @@ CONFIG = {
 
     # Simulation settings
     "simulation":{
+        "start_year": 2058,
+        "end_year": 2058,
         "default_output_suffix": "C", # suffix for the output file
         "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit', '.sql'], # files to be cleaned up
     },

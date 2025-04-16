@@ -233,11 +233,14 @@ class OptimizationPipeline:
 
             # Load and Modify the IDF file
             idf = IDFModel(str(run_idf_path))
+            idf.apply_run_peroid(self.config['simulation']['start_year'], self.config['simulation']['end_year'])
             idf.apply_output_requests() # Apply standard output requests
             idf.apply_simulation_control_settings()
 
             if not is_baseline and params_dict:
                 self._apply_ecms_to_idf(idf, params_dict)
+
+            idf.save()
 
             # Run EnergyPlus Simulation
             success, message = self.runner.run_simulation(
@@ -278,4 +281,86 @@ class OptimizationPipeline:
         else:
             logging.error(f"Baseline simulation failed for {self.unique_id}")
         return self.baseline_eui
+
+    def _run_sensitivity_analysis(self, params_array: np.ndarray, sample_index: int) -> dict|None:
+        """
+        Run a sensitivity analysis for a specific sample index.
+
+        Args:
+            params_array (np.ndarray): Array of parameters to analyze
+            sample_index (int): Index of the sample to analyze
+        
+        Returns:
+            dict|None: Dictionary containing the sensitivity analysis results or None if the simulation fails
+        """
+
+        # Convert the sample index to a parameter dictionary
+        params_dict = self._params_array_to_dict(params_array[sample_index])
+
+        # Run the simulation
+        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=f"sensitivity_{sample_index}", is_baseline=False)
+        params_dict = self._params_array_to_dict(params_array)
+        run_id = f"sample_{sample_index}"
+        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id, is_baseline=False)
+        if eui:
+            result_dict = params_dict.copy()
+            result_dict['eui'] = eui
+            return result_dict
+        else:
+            logging.error(f"Sensitivity analysis failed for sample {sample_index}")
+            return None
+        
+    def _refill_continuous_space(self, continuous_samples: np.ndarray, discrete_results_df: pd.DataFrame) -> np.ndarray:
+        """
+        Find or estimate the corresponding Energy Use Intensity (EUI) for a continuous sample in Sobol analysis.
+
+        Args:
+            continuous_samples (np.ndarray): Array of continuous samples
+            discrete_results_df (pd.DataFrame): DataFrame containing the results of the discrete samples
+        
+        Returns:
+            np.ndarray: Array of EUI values
+        """
+
+        # Initialize an empty array to store the EUI values
+        num_continuous = continuous_samples.shape[0] # Get the number of continuous samples
+        Y = np.full(num_continuous, np.nan) # Initialize the EUI array with NaNs
+
+        # Create a lookup dictionary based on discrete parameter combinations for efficiency
+        discrete_lookup = {}
+        # Iterate through the discrete results DataFrame
+        for index,row in discrete_results_df.iterrows():
+            key = tuple(row[self.ecm_names].values)
+            discrete_lookup[key] = row['eui']
+        
+        for i in range(num_continuous):
+            discrete_params_list = []
+            # Iterate through each parameter
+            for j, param_name in enumerate(self.ecm_names):
+                # Mapping the continuous sample to a discrete value
+                discrete_val = self._continuous_to_discrete(continuous_samples[i, j], param_name)
+                discrete_params_list.append(discrete_val)
+            # Converting discrete parameter lists to tuples for lookups
+            discrete_key = tuple(discrete_params_list)
+            # Retrieving the EUI from the dictionary.
+            if discrete_key in discrete_lookup:
+                Y[i] = discrete_lookup[discrete_key]
+            else:
+                # If an exact match can't be found among the discrete results.
+                logging.warning(f"Warning: Exact match: {discrete_key} was not found for sample {i} in the discrete result. the EUI will be NaN.")
+        
+        # Check if any NaNs are present in the EUI array
+        nan_count = np.isnan(Y).sum()
+        if nan_count > 0:
+            logging.warning(f"Warning: {nan_count}/{num_continuous} consecutive samples failed to find the corresponding discrete EUI.")
+        
+        return Y
+    
+    def run_sensitivity_analysis(self):
+        """
+        Perform the Sobol sensitivity analysis process.
+        """
+        logging.info(f"--- {self.unique_id}: Run sensitivity analysis ---")
+        num_vars = len(self.ecm_names)
+        
 

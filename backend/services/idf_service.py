@@ -167,6 +167,51 @@ class IDFModel:
         except Exception as e:
             raise ValueError(f"Failed to save IDF object to {save_path}: {e}")
         
+    def apply_run_peroid(self, start_year:int=None, end_year:int=None):
+        """
+        Add or remove a RunPeriod.
+
+        Args:
+            start_year (int, optional): Start year. Defaults to None.
+            end_year (int, optional): End year. Defaults to None.
+        """
+        run_periods = self.idf.idfobjects.get("RunPeriod", [])
+
+        # Setting the Start Date And End Date
+        if start_year and end_year:
+            logging.info(f"Configure the RunPeriod to explicitly specify the years: {start_year}-{end_year}.")
+            if len(run_periods) > 0:
+                for rp in run_periods[1:]:
+                    self.idf.removeidfobject(rp)
+        
+            if not run_periods:
+                rp = self.idf.newidfobject(
+                    "RunPeriod",
+                    Name = f"RunPeriod_{start_year}_{end_year}",
+                    )
+            else:
+                rp = run_periods[0]
+
+            # Set the RunPeriod filed
+            rp.Begin_Month = 1
+            rp.Begin_Day_of_Month = 1
+            rp.Begin_Year = start_year
+            rp.End_Month = 12
+            rp.End_Day_of_Month = 31
+            rp.End_Year = end_year
+            rp.Use_Weather_File_Holidays_and_Special_Days = "Yes" # Leverage Weather File Holidays
+            rp.Use_Weather_File_Daylight_Saving_Period = "Yes" # Leverage Weather File Daylight Saving Period
+            rp.Apply_Weekend_Holiday_Rule = "No" # Don't apply weekend holiday rule
+            rp.Use_Weather_File_Rain_Indicators = "Yes" # Leverage Weather File Rain Indicators
+            rp.Use_Weather_File_Snow_Indicators = "Yes" # Leverage Weather File Snow Indicators
+            rp.Day_of_Week_for_Start_Day = "Monday" # Or "Monday", "Tuesday", etc.
+            if hasattr(rp, 'Use_Weather_File_for_Run_Period_Calculation'):
+                rp.Use_Weather_File_for_Run_Period_Calculation = "No"
+            logging.info(f"RunPeriod {rp.Name} created successfully.")
+
+        else:
+            logging.warning("Warning: No run period mode specified (year not provided). The RunPeriod object remains unchanged.")
+        
     def apply_output_requests(self):
         """
         Configure output variables and reporting for the IDF object.
