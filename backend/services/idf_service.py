@@ -354,7 +354,7 @@ class IDFModel:
         surfaces = self.idf.idfobjects.get("BuildingSurface:Detailed", [])
         exterior_surfaces = []
         for surf in surfaces:
-            if surf.Outside_Boundary_Condition.upper() == "OUTSIDE" and \
+            if surf.Outside_Boundary_Condition.upper() == "OUTDOORS" and \
                 surf.Surface_Type.upper() in ["WALL", "ROOF"]:
                 exterior_surfaces.append(surf.Name)
 
@@ -404,7 +404,7 @@ class IDFModel:
             self.idf.newidfobject(
                 "ZoneInfiltration:DesignFlowRate",
                 Name = infiltration_object_name,
-                Zone_or_Zone_List_Name = zone_name,
+                Zone_or_ZoneList_or_Space_or_SpaceList_Name = zone_name,
                 Schedule_Name = sched_name,
                 Design_Flow_Rate_Calculation_Method = "AirChanges/Hour", # Air Changes per Hour
                 Air_Changes_per_Hour = ach_rate,
@@ -474,8 +474,8 @@ class IDFModel:
         dx_coils = self.idf.idfobjects.get('Coil:Cooling:DX:SingleSpeed', [])
         for coil in dx_coils:
             # Assume COP field name is 'Rated_COP' (need to check IDD for confirmation)
-            if hasattr(coil, 'Rated_COP'): # Check if the coil has a Rated_COP attribute
-                coil.Rated_COP = cop
+            if hasattr(coil, 'Gross_Rated_Cooling_COP'): # Check if the coil has a Gross_Rated_Cooling_COP attribute
+                coil.Gross_Rated_Cooling_COP = cop
                 modified_count += 1
         
         # Example modified Chiller:Electric:EIR
@@ -560,7 +560,7 @@ class IDFModel:
         if opening_area_m2 <= 0: return # Return if opening area is not positive
 
         # Remove existing AirflowNetwork:Distribution objects
-        self.remove_objects_by_type(['ZoneVentilation:WindandStackOpenArea'])
+        self._remove_objects_by_type(['ZoneVentilation:WindandStackOpenArea'])
 
         # Define the schedule for the natural ventilation
         sched_name = "NatVentSched_AlwaysOn"
@@ -582,9 +582,9 @@ class IDFModel:
             self.idf.newidfobject(
                 "ZoneVentilation:WindandStackOpenArea",
                 Name=nv_object_name,
-                Zone_Name=zone_name,
+                Zone_or_Space_Name=zone_name,
                 Opening_Area=opening_area_m2,
-                pening_Area_Fraction_Schedule_Name=sched_name,
+                Opening_Area_Fraction_Schedule_Name=sched_name,
                 Opening_Effectiveness="Autocalculate", # Autocalculate the opening effectiveness
                 Discharge_Coefficient_for_Opening="Autocalculate", # Autocalculate the discharge coefficient for the opening
                 # Accroding to archive/ECM.py file

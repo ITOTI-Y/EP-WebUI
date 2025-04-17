@@ -27,6 +27,7 @@ CONFIG = {
     "constants":{
         'ng_conversion_factor': 3.2, # conversion factor for natural gas to energy
         'cpu_count_override': os.cpu_count() - 1, # number of cores to use for simulation
+        'debug': False, # debug mode
     },
 
     # Different Building Types Ratio of the city
@@ -42,12 +43,12 @@ CONFIG = {
     "ecm_ranges":{
         "shgc": [0.2, 0.4, 0.6, 0.8], # Solar Heat Gain Coefficient
         "win_u": [0.5, 1, 1.5, 2, 2.5, 3], # Window U-value (W/m2K)
-        "nv_area": [0, 0.4, 0.8, 1.2, 1.6, 2, 2.4], # Natural Ventilation Area (m2)
-        "insu": [0, 1, 2, 3, 4], # Wall Insulation R-value (m2K/W)
+        "nv_area": [0.4, 0.8, 1.2, 1.6, 2, 2.4], # Natural Ventilation Area (m2)
+        "insu": [1, 2, 3, 4], # Wall Insulation R-value (m2K/W)
         "infl": [0.25, 0.5, 0.75, 1, 1.25, 1.5], # Air Infiltration Rate (ACH)
-        "cool_cop": [0, 3.5, 4, 4.5, 5, 5.5, 6], # Cooling Coefficient of Performance
-        "cool_air_temp": [0, 10, 12, 14, 16], # Cooling Air Supply Temperature (C)
-        "lighting": [0, 1, 2, 3], # Lighting Power Density (W/m2)
+        "cool_cop": [3.5, 4, 4.5, 5, 5.5, 6], # Cooling Coefficient of Performance
+        "cool_air_temp": [10, 12, 14, 16], # Cooling Air Supply Temperature (C)
+        "lighting": [1, 2, 3], # Lighting Power Density (W/m2)
         "vt": [0.6] # Visible Light Transmittance
     },
 
@@ -55,6 +56,7 @@ CONFIG = {
     "lighting_reduction_map":{
         "office_large": {1: 0.2, 2: 0.47, 3: 0.53},
         "office_medium": {1: 0.2, 2: 0.47, 3: 0.53},
+        "office_small": {1: 0.2, 2: 0.47, 3: 0.53},
         "apartment_high_rise": {1: 0.35, 2: 0.45, 3: 0.55},
         "sf": {1: 0.45, 2: 0.5, 3: 0.64},
         "mf": {1: 0.35, 2: 0.45, 3: 0.55},
@@ -70,7 +72,7 @@ CONFIG = {
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 16, # Number of samples for Saltelli's sampling
         "optimization_model": 'ols', # Optimization model example: ['ols', 'rf', etc]
         "ga_population_size": 100, # Population size for genetic algorithm
         "ga_generations": 100, # Number of generations for genetic algorithm

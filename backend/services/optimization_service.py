@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import shutil
 import logging
+import json
 from .idf_service import IDFModel
 from .simulation_service import EnergyPlusRunner, SimulationResult
 from joblib import Parallel, delayed
@@ -97,7 +98,7 @@ class OptimizationPipeline:
         logging.info(f"Found weather file: {found[0]}")
         return found[0]
     
-    def _continuous_to_discrete(self, value, param_name):
+    def _continuous_to_discrete(self, value: float, param_name: str) -> float:
         """
         Maps a continuous value within the range of [0, 1) to 
         a discrete level based on provided parameters.
@@ -111,7 +112,7 @@ class OptimizationPipeline:
         if not discrete_levels:
             logging.error(f"No discrete levels defined for {param_name}")
             raise ValueError(f"Unknown ECM Parameter: {param_name}")
-        if not isinstance(discrete_levels. list) or len(discrete_levels) == 0:
+        if not isinstance(discrete_levels, list) or len(discrete_levels) == 0:
             logging.error(f"Invalid discrete levels for {param_name}: {discrete_levels}")
             raise ValueError(f"The provided discrete levels for parameter '{param_name}' are invalid: {discrete_levels}")
 
@@ -194,21 +195,22 @@ class OptimizationPipeline:
                     logging.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required \
                                     for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
                 
-            # Process Window properties
-            win_u = params_dict.get('win_u', 0)
-            shgc = params_dict.get('shgc', 0)
-            vt = params_dict.get('vt', 0)
-            if win_u > 0 and shgc > 0:
-                idf_model.apply_window_properties(win_u, shgc, vt)
-            elif win_u > 0:
-                # Only update U-value while keeping SHGC and VT the same
-                pass # Not implemented yet
-            elif shgc > 0:
-                # Only update SHGC while keeping U-value and VT the same
-                pass # Not implemented yet
-            elif vt > 0:
-                # Only update VT while keeping U-value and SHGC the same
-                pass # Not implemented yet
+            elif param_name in ['shgc', 'win_u', 'vt']:
+                # Process Window properties
+                win_u = params_dict.get('win_u', 0)
+                shgc = params_dict.get('shgc', 0)
+                vt = params_dict.get('vt', 0)
+                if win_u > 0 and shgc > 0:
+                    idf_model.apply_window_properties(win_u, shgc, vt)
+                elif win_u > 0:
+                    # Only update U-value while keeping SHGC and VT the same
+                    pass # Not implemented yet
+                elif shgc > 0:
+                    # Only update SHGC while keeping U-value and VT the same
+                    pass # Not implemented yet
+                elif vt > 0:
+                    # Only update VT while keeping U-value and SHGC the same
+                    pass # Not implemented yet
 
     def _run_single_simulation_internal(self, params_dict: dict={}, run_id: str=None, is_baseline:bool=False):
         """
@@ -220,7 +222,7 @@ class OptimizationPipeline:
             is_baseline (bool, optional): Explicitly designated as a benchmark run. Defaults to False.
         """
 
-        run_label = run_id if run_id else 'baseline' if is_baseline else 'ecm_run'
+        run_label = str(run_id) if run_id is not None else 'baseline' if is_baseline else 'ecm_run'
         run_dir = self.work_dir / run_label
         run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -281,6 +283,27 @@ class OptimizationPipeline:
         else:
             logging.error(f"Baseline simulation failed for {self.unique_id}")
         return self.baseline_eui
+    
+    def _run_sensitivity_sample_point(self, params_array: np.ndarray, sample_index: int) -> dict|None:
+        """
+        Evaluating a single parameter set for sensitivity analysis.
+
+        Args:
+            params_array (np.ndarray): Array of parameters to analyze
+            sample_index (int): Index of the sample to analyze
+
+        Returns:
+            dict|None: A dictionary containing the parameters and resulting EUI, or None.
+        """
+        params_dict = self._params_array_to_dict(params_array)
+        run_id = f"sample_{sample_index}"
+        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id)
+        if eui is not None:
+            result_dict = params_dict.copy()
+            result_dict['eui'] = eui
+            return result_dict
+        else:
+            return None
 
     def _run_sensitivity_analysis(self, params_array: np.ndarray, sample_index: int) -> dict|None:
         """
@@ -362,5 +385,351 @@ class OptimizationPipeline:
         """
         logging.info(f"--- {self.unique_id}: Run sensitivity analysis ---")
         num_vars = len(self.ecm_names)
-        
+        N_samples_base = self.config['analysis']['sensitivity_samples_n']
+        num_cpu = self.config['constants']['cpu_count_override']
 
+        # Define the Sobol Problem
+        problem = {
+            "num_vars": num_vars,
+            "names": self.ecm_names,
+            "bounds": [[0.0, 1.0] * num_vars]
+        }
+
+        # Generate continuous samples
+        param_values_continuous = saltelli.sample(problem, N_samples_base, calc_second_order=True)
+
+        # Transform the continuous samples to discrete samples
+        param_values_discrete_unique = set()
+        for i in range(param_values_continuous.shape[0]):
+            discrete_sample = tuple(self._continuous_to_discrete(param_values_continuous[i, j], name)
+                                    for j, name in enumerate(self.ecm_names))
+            param_values_discrete_unique.add(discrete_sample)
+        
+        param_values_discrete_list = [list(s) for s in param_values_discrete_unique]
+        num_unique_samples = len(param_values_discrete_list)
+        logging.info(f"Generated {param_values_continuous.shape[0]} continuous samples, which map to {num_unique_samples} unique discrete parameter combinations.")
+
+        # Run Simulation for Discrete Samples in Parallel
+        discrete_results_file = self.work_dir / 'sensitivity_discrete_results.csv'
+        if not discrete_results_file.exists():
+            logging.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {num_cpu} cores)...")
+            
+            # Set n_jobs to 1 if debug, otherwise use all cores.
+            n_jobs = 1 if self.config['constants']['debug'] else num_cpu
+            results_list = Parallel(n_jobs=n_jobs, verbose=10)(
+                delayed(self._run_sensitivity_sample_point)(params, i)
+                for i, params in enumerate(param_values_discrete_list)
+            )
+
+            successful_results = [r for r in results_list if r is not None]
+            if not successful_results:
+                logging.error("No successful simulations completed during sensitivity analysis.")
+                return
+            
+            self.sensitivity_samples = pd.DataFrame(successful_results)
+            self.sensitivity_samples.to_csv(discrete_results_file, index=False)
+            logging.info(f"Discrete sensitivity analysis results saved to {discrete_results_file}")
+        else:
+            logging.info(f"Loading discrete sensitivity analysis results from {discrete_results_file}")
+            self.sensitivity_samples = pd.read_csv(discrete_results_file)
+
+        # Refilling the EUI for Continuous Sample Spaces.
+        logging.info("Re-populating the EUI of a continuous sample space for Sobol analysis...")
+        Y = self._refill_continuous_space(param_values_continuous, self.sensitivity_samples)
+        if np.isnan(Y).all():
+            logging.error("Error: Unable to locate EUIs for any consecutive samples, Sobol analysis cannot be performed.")
+            return
+
+        # Handle NaN in Y (e.g., remove corresponding samples or padding, choose remove here)
+        valid_indices = ~np.isnan(Y)
+        if not np.all(valid_indices):
+            logging.warning(f"Warning: {np.isnan(Y).sum()} samples with NaN EUI values were removed from the analysis.")
+            param_values_continuous_valid = param_values_continuous[valid_indices]
+            Y_valid = Y[valid_indices]
+            if len(Y_valid) < 2:
+                logging.error("Error: Not enough valid samples for Sobol analysis.")
+                return
+        else:
+            param_values_continuous_valid = param_values_continuous
+            Y_valid = Y
+
+        # Perform Sobol Analysis
+        logging.info("Performing Sobol sensitivity analysis...")
+        try:
+            Si = sobol.analyze(problem, Y_valid, calc_second_order=True, print_to_console=True)
+            self.sensitivity_results = Si
+        except Exception as e:
+            logging.error(f"Error: An issue arose while performing the Sobol analysis: {e}")
+            return
+
+        first_order = pd.Series(Si['S1'], index=problem['names'], name='S1')
+        total_order = pd.Series(Si['ST'], index=problem['names'], name='ST')
+        sensitivity_indices = pd.concat([first_order, total_order], axis=1)
+        si_file = self.work_dir / 'sensitivity_indices.csv'
+        sensitivity_indices.to_csv(si_file)
+        logging.info(f"Sobol sensitivity indices saved to {si_file}")
+        if 'S2' in Si and Si['S2'] is not None:
+            second_order = pd.DataFrame(Si['S2'], index=problem['names'], columns=problem['names'])
+            s2_file = self.work_dir / 'sensitivity_indices_S2.csv'
+            second_order.to_csv(s2_file)
+            logging.info(f"Sobol second-order sensitivity indices saved to {s2_file}")
+    
+    def build_surrogate_model(self, model_type: str=None):
+        """
+        Based on the sensitivity analysis, construct a surrogate model.
+
+        Args:
+            model_type (str, optional): Optimization model type. Defaults to None.
+        """
+        model_type = model_type if model_type else self.config['analysis']['optimization_model']
+        logging.info(f"Building a {model_type} surrogate model...")
+
+        if self.sensitivity_samples is None:
+            samples_file = self.work_dir / 'sensitivity_discrete_results.csv'
+            if samples_file.exists():
+                logging.info(f"Loading discrete sample data from file: {samples_file}")
+                self.sensitivity_samples = pd.read_csv(samples_file)
+            else:
+                logging.error("Error: Sensitivity analysis sample data not found; a surrogate model cannot be built.\
+                            Please run `run_sensitivity_analysis()` first.")
+                return
+        
+        # Preparing data for modeling (X: Parameters, Y: EUI).
+        df = self.sensitivity_samples.dropna(subset=['eui'])
+        X = df[self.ecm_names]
+        Y = df['eui']
+
+        if X.empty or Y.empty:
+            logging.error("Error: Unable to build a surrogate model due to missing sample data or an invalid EUI column.")
+            return
+    
+        model = None
+        summary_info = None
+        model_file = self.work_dir / f"surrogate_model_{model_type}.txt"
+
+        try:
+            if model_type == 'ols':
+                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
+                model = ols(formula, data=df).fit()
+                summary_info = model.summary().as_text()
+                with open(model_file, 'w') as f: f.write(summary_info)
+            elif model_type.lower() == 'rf':
+                model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+                model.fit(X, Y)
+                importances = pd.Series(model.feature_importances_, index=self.ecm_names).sort_values(ascending=False) # Extracting feature importance.
+                summary_info = importances.to_string()
+                importances.to_csv(model_file.replace('.txt', '_importance.csv'))
+                with open(model_file, 'w') as f: f.write("Random Forest Feature Importances:\n" + summary_info)
+            else:
+                logging.warning(f"Warning: The surrogate model type '{model_type}' is not supported. Reverting to Ordinary Least Squares (OLS).")
+                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
+                model = ols(formula, data=df).fit()
+                summary_info = model.summary().as_text()
+                with open(model_file.replace(f'_{model_type}.txt', '_ols.txt'), 'w') as f: f.write(summary_info)
+
+            self.surrogate_model = model
+            self.surrogate_model_summary = summary_info
+            logging.info(f"A surrogate model ({model_type}) has been successfully constructed, and a summary of its key information has been saved to: {model_file}.")
+        
+        except Exception as e:
+            logging.error(f"Error: An issue arose while building the surrogate model: {e}")
+            self.surrogate_model = None
+            self.surrogate_model_summary = None
+    
+    def optimize(self, model_type: str=None):
+        """
+        Employ surrogate modeling to pinpoint the optimal combination of ECM parameters for minimizing Energy Use Intensity (EUI).
+
+        Args:
+            model_type (str, optional): Optimization model type. Defaults to None.
+        """
+        model_type = model_type if model_type else self.config['analysis']['optimization_model']
+        logging.info(f"--- {self.unique_id}: Optimizing with a Surrogate Model ({model_type}) ---")
+
+        if self.surrogate_model is None:
+            logging.info("Info: The surrogate model hasn't been built yet; attempting to construct it now...")
+            self.build_surrogate_model(model_type=model_type)
+            if self.surrogate_model is None:
+                logging.error("Error: Unable to build agent model, optimization aborted.")
+            return
+        
+        # Define the objective function for the surrogate model
+        def objective_function(params_array: np.ndarray) -> float:
+            """
+            Surrogate model for predicting the EUI objective function.
+
+            Args:
+                params_array (np.ndarray): Array of parameters to evaluate
+
+            Returns:
+                float: Predicted EUI value
+            """
+            params_df = pd.DataFrame([params_array], columns=self.ecm_names)
+            try:
+                # Predict the EUI using the surrogate model
+                predicted_eui = self.surrogate_model.predict(params_df)
+                return float(predicted_eui[0]) if hasattr(predicted_eui, '__len__') else float(predicted_eui)
+            except Exception as e:
+                logging.warning(f"Warning: The surrogate model's prediction failed: {e}. Parameters: {params_array}. Returning the maximum value as a fallback.")
+                return float('inf')
+        
+        # Define the bounds for the optimization
+        bounds = [] 
+        initial_guess = []
+        for name in self.ecm_names:
+            levels = self.ecm_ranges[name]
+            bounds.append((min(levels), max(levels)))
+            # Set the initial guess to the midpoint of the range, or the first non-zero value encountered.
+            non_zero_levels = [l for l in levels if l != 0]
+            initial_guess.append(np.mean(levels) if not non_zero_levels else non_zero_levels[0])
+
+        # Perform the optimization
+        logging.info("Starting the optimization process...")
+        try:
+            result = minimize(
+                objective_function, # objective function
+                x0=initial_guess, # initial guess
+                method='L-BFGS-B', # optimization algorithm
+                bounds=bounds, # parameter bounds
+                options={'maxiter': 100} # optimization options
+            )
+
+            self.optimization_results = result
+
+            if result.success:
+                optimal_params_continuous = result.x
+                self.optimal_params = self._map_continuous_to_nearest_discrete(optimal_params_continuous) # Map the continuous parameters to the nearest discrete values.
+                # Leveraging a surrogate model to predict the EUI of discrete optima
+                self.optimal_eui_predicted = objective_function(list(self.optimal_params.values()))
+                logging.info(f"Optimization successful. Projected optimal EUI: {self.optimal_eui_predicted:.2f}")
+                logging.info("Optimal parameter set (discrete):")
+                for name, val in self.optimal_params.items():
+                    logging.info(f"{name}: {val:.2f}")
+            else:
+                logging.error(f"Optimization failed. Reason: {result.message}")
+                self.optimal_params = None
+                self.optimal_eui_predicted = None
+        except Exception as e:
+            logging.error(f"Error: An issue arose while optimizing: {e}")
+            self.optimal_params = None
+            self.optimal_eui_predicted = None
+
+    def _map_continuous_to_nearest_discrete(self, continuous_params: np.ndarray) -> dict:
+        """
+        Maps the continuous optimization results to the nearest permissible discrete value for each parameter.
+
+        Args:
+            continuous_params (np.ndarray): Continuous parameter values from the optimization results.
+
+        Returns:
+            dict: Dictionary containing the optimal parameter values mapped to the nearest discrete values.
+        """
+        discrete_params = {}
+        for i, name in enumerate(self.ecm_names):
+            continuous_val = continuous_params[i]
+            discrete_levels = self.ecm_ranges[name]
+            nearest_discrete_val = min(discrete_levels, key=lambda x: abs(x - continuous_val))
+            discrete_params[name] = nearest_discrete_val
+        return discrete_params
+    
+    def validate_optimum(self):
+        """
+        Execute EnergyPlus simulations with optimized parameters to validate the predicted results.
+        """
+        if self.optimal_params is None:
+            logging.error("Error: Optimization parameters not found; verification cannot proceed. Please run `optimize()` first.")
+            return
+        
+        logging.info(f"--- {self.unique_id}: Validating the optimal parameter set ---")
+        self.optimal_eui_simulated = self._run_single_simulation_internal(
+            params_dict=self.optimal_params,
+            run_id=f"optimized",
+        )
+
+        if self.optimal_eui_simulated:
+            logging.info(f"Optimal Simulated EUI: {self.optimal_eui_simulated:.2f} kWh/m².")
+
+            if self.optimal_eui_predicted:
+                self.optimization_bias = abs(self.optimal_eui_simulated - self.optimal_eui_predicted) / self.optimal_eui_simulated * 100
+                logging.info(f"Optimization bias: {self.optimization_bias:.2f}%")
+            else:
+                logging.warning("Warning: The predicted EUI is not available. The bias cannot be calculated.")
+
+            if not self.baseline_eui:
+                logging.info("Info: The baseline EUI hasn't been calculated. Attempting to run it now...")
+                self.run_baseline_simulation()
+            
+            if self.baseline_eui and self.baseline_eui > 0:
+                self.optimization_improvement = (self.baseline_eui - self.optimal_eui_simulated) / self.baseline_eui * 100
+                logging.info(f"Info: EUI Improvement (Relative to Baseline): {self.optimization_improvement:.2f}%")
+
+            elif self.baseline_eui == 0:
+                logging.warning("Warning: Improvement rate cannot be calculated (baseline EUI is zero).")
+            else:
+                logging.warning("Warning: The baseline EUI is not available. The improvement rate cannot be calculated.")
+        else:
+            logging.warning("Warning: The optimal EUI simulation failed. The validation cannot be performed.")
+    
+    def save_results(self):
+        """
+        Save key results from the process to a file 
+        """
+        results_data = {
+            "city": self.city,
+            "ssp": self.ssp,
+            "btype": self.btype,
+            "baseline_eui": self.baseline_eui,
+            "optimal_params": self.optimal_params,
+            "optimal_eui_predicted": self.optimal_eui_predicted,
+            "optimal_eui_simulated": self.optimal_eui_simulated,
+            "optimization_improvement_percent": self.optimization_improvement,
+            "optimization_bias_percent": self.optimization_bias,
+            "sensitivity_indices": self.sensitivity_results,
+        }
+        result_file = self.work_dir / "pipeline_results.json"
+        try:
+            with open(result_file, "w") as f:
+                json.dump(results_data, f, indent=4, default=lambda o: '<not serializable>')
+            logging.info(f"Optimization results saved to {result_file}")
+        except Exception as e:
+            logging.error(f"Error: Failed to save results to {result_file}: {e}")
+
+    def run_full_pipeline(self, run_sens:bool=True, build_model:bool=True, run_opt=True, validate=True, save=True):
+        """
+        Execute each stage of the entire optimization process sequentially.
+
+        Args:
+            run_sens (bool, optional): Run the sensitivity analysis. Defaults to True.
+            build_model (bool, optional): Build the surrogate model. Defaults to True.
+            run_opt (bool, optional): Run the optimization. Defaults to True.
+            validate (bool, optional): Validate the results. Defaults to True.
+            save (bool, optional): Save the results. Defaults to True.
+        """
+        logging.info(f"======== Start processing: {self.unique_id} ========")
+        if self.run_baseline_simulation() is None and (run_sens or validate):
+            logging.error("Error: The baseline EUI hasn't been calculated. The pipeline cannot proceed.")
+            return
+        
+        if run_sens:
+            self.run_sensitivity_analysis()
+            if self.sensitivity_results is None:
+                logging.error("Error: Sensitivity analysis failed, subsequent steps may be impacted.")
+        
+        if build_model:
+            self.build_surrogate_model()
+            if self.surrogate_model is None:
+                logging.error("Error: The attempt to build a surrogate model has failed, precluding optimization and validation.")
+
+        if run_opt:
+            self.optimize()
+            if self.optimization_results is None:
+                logging.error("Error: Optimization failed, preventing validation from proceeding.")
+                return 
+        
+        if validate:
+            self.validate_optimum()
+        
+        if save:
+            self.save_results()
+        
+        logging.info(f"======== End processing: {self.unique_id} ========")

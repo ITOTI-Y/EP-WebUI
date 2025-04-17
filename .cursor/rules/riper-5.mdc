@@ -1,7 +1,7 @@
 ---
 description: 
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 # RIPER-5 MODE: STRICT OPERATIONAL PROTOCOL
 
@@ -79,9 +79,9 @@ n. [Final action]
 - **Purpose**: Ruthlessly validate implementation against the plan
 - **Permitted**: Line-by-line comparison between plan and implementation
 - **Required**: EXPLICITLY FLAG ANY DEVIATION, no matter how minor
-- **Deviation Format**: “![:warning:](https://emoji.discourse-cdn.com/fluentui/warning.png?v=14) DEVIATION DETECTED: [description of exact deviation]”
+- **Deviation Format**: “![:warning:](mdc:https:/emoji.discourse-cdn.com/fluentui/warning.png?v=14) DEVIATION DETECTED: [description of exact deviation]”
 - **Reporting**: Must report whether implementation is IDENTICAL to plan or NOT
-- **Conclusion Format**: “![:white_check_mark:](https://emoji.discourse-cdn.com/fluentui/white_check_mark.png?v=14) IMPLEMENTATION MATCHES PLAN EXACTLY” or “![:cross_mark:](https://emoji.discourse-cdn.com/fluentui/cross_mark.png?v=14) IMPLEMENTATION DEVIATES FROM PLAN”
+- **Conclusion Format**: “![:white_check_mark:](mdc:https:/emoji.discourse-cdn.com/fluentui/white_check_mark.png?v=14) IMPLEMENTATION MATCHES PLAN EXACTLY” or “![:cross_mark:](mdc:https:/emoji.discourse-cdn.com/fluentui/cross_mark.png?v=14) IMPLEMENTATION DEVIATES FROM PLAN”
 - **Output Format**: Begin with [MODE: REVIEW], then systematic comparison and explicit verdict
 
 ## CRITICAL PROTOCOL GUIDELINES
