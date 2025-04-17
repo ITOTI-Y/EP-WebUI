@@ -5,6 +5,7 @@ import pandas as pd
 import shutil
 import logging
 import json
+from .pv_service import PVManager
 from .idf_service import IDFModel
 from .simulation_service import EnergyPlusRunner, SimulationResult
 from joblib import Parallel, delayed
@@ -51,6 +52,7 @@ class OptimizationPipeline:
 
         # Initialize Results
         self.baseline_eui = None # Benchmark EUI
+        self.building_floor_area = None # Building floor area
         self.sensitivity_samples = None # Sample sensitivity analysis (discrete)
         self.sensitivity_results = None # Sobol Analysis Results (Indices)
         self.surrogate_model = None # Surrogate Model
@@ -61,6 +63,11 @@ class OptimizationPipeline:
         self.optimal_eui_simulated = None # EUI Optimized Through Real-World Simulation
         self.optimization_improvement = None # EUI Improvement Rate
         self.optimization_bias = None # Optimization bias
+        self.suitable_surfaces = None # Suitable surfaces for PV installation
+        self.pv_idf_path = None # Path to the IDF file with PV
+        self.pv_generation_results = None # PV generation results
+        self.gross_eui_with_pv = None # Gross EUI with PV
+        self.net_eui_with_pv = None # Net EUI with PV
 
     def _find_prototype_idf(self):
         """
@@ -228,6 +235,7 @@ class OptimizationPipeline:
 
         run_idf_path = run_dir / f"{run_label}.idf"
         run_output_prefix = run_label
+        floor_area = None
 
         try:
             # Copy the prototype IDF file to the run directory
@@ -241,7 +249,7 @@ class OptimizationPipeline:
 
             if not is_baseline and params_dict:
                 self._apply_ecms_to_idf(idf, params_dict)
-
+            floor_area = idf.get_total_floor_area() # Get the total floor area
             idf.save()
 
             # Run EnergyPlus Simulation
@@ -262,26 +270,30 @@ class OptimizationPipeline:
                 eui = result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
                 if eui is None:
                     logging.error(f"Failed to calculate source EUI for run {run_label}")
-                return eui 
+                return eui, floor_area
             else:
                 logging.error(f"Simulation failed for run {run_label}: {message}")
-                return None
+                return None, floor_area
         
         except Exception as e:
             logging.error(f"An error occurred while running simulation {run_label}: {e}")
             shutil.rmtree(run_dir, ignore_errors=True)
-            return None
+            return None, floor_area
     
     def run_baseline_simulation(self):
         """
         Run a baseline simulation and save EUI
         """
         logging.info(f"Running baseline simulation for {self.unique_id}")
-        self.baseline_eui = self._run_single_simulation_internal(is_baseline=True, run_id="baseline")
+        self.baseline_eui, self.building_floor_area = self._run_single_simulation_internal(is_baseline=True, run_id="baseline")
         if self.baseline_eui is not None:
             logging.info(f"Baseline simulation completed successfully. Reference source EUI: {self.baseline_eui} kWh/m2/yr")
         else:
             logging.error(f"Baseline simulation failed for {self.unique_id}")
+        if self.building_floor_area is not None and self.building_floor_area > 0:
+            logging.info(f"Building floor area: {self.building_floor_area:.2f} m2")
+        else:
+            logging.warning(f"Warning: Unable to obtain a valid building floor area.")
         return self.baseline_eui
     
     def _run_sensitivity_sample_point(self, params_array: np.ndarray, sample_index: int) -> dict|None:
@@ -297,7 +309,7 @@ class OptimizationPipeline:
         """
         params_dict = self._params_array_to_dict(params_array)
         run_id = f"sample_{sample_index}"
-        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id)
+        eui, _ = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id)
         if eui is not None:
             result_dict = params_dict.copy()
             result_dict['eui'] = eui
@@ -412,10 +424,10 @@ class OptimizationPipeline:
         # Run Simulation for Discrete Samples in Parallel
         discrete_results_file = self.work_dir / 'sensitivity_discrete_results.csv'
         if not discrete_results_file.exists():
-            logging.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {num_cpu} cores)...")
-            
             # Set n_jobs to 1 if debug, otherwise use all cores.
             n_jobs = 1 if self.config['constants']['debug'] else num_cpu
+
+            logging.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {n_jobs} cores)...")
             results_list = Parallel(n_jobs=n_jobs, verbose=10)(
                 delayed(self._run_sensitivity_sample_point)(params, i)
                 for i, params in enumerate(param_values_discrete_list)
@@ -641,10 +653,12 @@ class OptimizationPipeline:
             return
         
         logging.info(f"--- {self.unique_id}: Validating the optimal parameter set ---")
-        self.optimal_eui_simulated = self._run_single_simulation_internal(
+        self.optimal_eui_simulated, floor_area = self._run_single_simulation_internal(
             params_dict=self.optimal_params,
             run_id=f"optimized",
         )
+        if floor_area is not None and floor_area > 0:
+            self.building_floor_area = floor_area # Update the building floor area
 
         if self.optimal_eui_simulated:
             logging.info(f"Optimal Simulated EUI: {self.optimal_eui_simulated:.2f} kWh/m².")
@@ -669,6 +683,60 @@ class OptimizationPipeline:
                 logging.warning("Warning: The baseline EUI is not available. The improvement rate cannot be calculated.")
         else:
             logging.warning("Warning: The optimal EUI simulation failed. The validation cannot be performed.")
+
+    def run_pv_analysis(self):
+        """Find suitable surfaces, add PV, run simulation, and calculate net EUI."""
+        if not self.config.get('pv_analysis', {}).get('enabled', False):
+            logging.info(f"--- {self.unique_id}: PV analysis is disabled ---")
+            return
+        if self.optimal_eui_simulated is None or self.optimal_params is None:
+            logging.error(f"Error: Optimization or validation not completed, cannot perform PV analysis.")
+            return
+        if self.building_floor_area is None or self.building_floor_area <= 0:
+            logging.error(f"Error: Missing valid floor area, cannot calculate net EUI.")
+            return
+        logging.info(f"--- {self.unique_id}: Starting PV analysis ---")
+        try:
+            optimized_idf_obj_path = self.work_dir / "optimized" / "optimized.idf"
+            if not optimized_idf_obj_path.exists():
+                logging.error(f"Error: Verified optimized IDF not found: {optimized_idf_obj_path}")
+                return
+            optimized_idf_model = IDFModel(optimized_idf_obj_path) # Load the verified optimized IDF
+            pv_manager = PVManager(optimized_idf_model=optimized_idf_model, runner=self.runner, config=self.config,
+                                   weather_path=self.weather_path, base_work_dir=self.work_dir)
+            self.suitable_surfaces = pv_manager.find_suitable_surfaces() # Find surfaces
+
+            if self.suitable_surfaces:
+                pv_run_id = "optimized_pv"
+                self.pv_idf_path = pv_manager.add_pv_to_idf(self.suitable_surfaces, pv_run_id) # Add PV
+                if self.pv_idf_path:
+                    pv_output_dir = self.work_dir / pv_run_id
+                    pv_output_prefix = self.config['pv_analysis'].get('pv_output_prefix', 'pv')
+                    success, message = self.runner.run_simulation( # Run the PV simulation
+                        idf_path=self.pv_idf_path, weather_path=self.weather_path,
+                        output_dir=pv_output_dir, output_prefix=pv_output_prefix, config=self.config)
+                    if success:
+                        self.pv_generation_results = pv_manager.analyze_pv_generation(pv_output_prefix) # Analyze the PV generation
+                        pv_result_parser = SimulationResult(pv_output_dir, pv_output_prefix) # Get the total EUI
+                        self.gross_eui_with_pv = pv_result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
+                        if self.gross_eui_with_pv is not None and self.pv_generation_results is not None:
+                            total_pv_kwh = self.pv_generation_results.get('total_annual_kwh', 0.0)
+                            pv_kwh_per_m2 = total_pv_kwh / self.building_floor_area # Calculate the PV generation intensity
+                            self.net_eui_with_pv = self.gross_eui_with_pv - pv_kwh_per_m2 # Calculate the net EUI
+                            logging.info(f"Gross EUI with PV: {self.gross_eui_with_pv:.2f} kWh/m2")
+                            logging.info(f"Annual PV generation: {total_pv_kwh:.2f} kWh ({pv_kwh_per_m2:.2f} kWh/m2)")
+                            logging.info(f"Net source EUI (Net): {self.net_eui_with_pv:.2f} kWh/m2")
+                        else: logging.warning("Warning: Unable to obtain the total EUI with PV or PV generation data, unable to calculate the net EUI.")
+                    else:
+                        logging.error(f"Error: Final PV simulation failed: {message}")
+                else:
+                    logging.error("Error: Failed to add PV to IDF.")
+            else:
+                logging.info("Info: No suitable surfaces found for PV installation. Skipping PV simulation.")
+                self.net_eui_with_pv = self.optimal_eui_simulated
+        except Exception as e:
+            logging.error(f"Error: An issue arose while executing the PV analysis: {e}")
+            import traceback; traceback.print_exc()
     
     def save_results(self):
         """
@@ -678,23 +746,39 @@ class OptimizationPipeline:
             "city": self.city,
             "ssp": self.ssp,
             "btype": self.btype,
+            'building_floor_area_m2': self.building_floor_area,
             "baseline_eui": self.baseline_eui,
             "optimal_params": self.optimal_params,
             "optimal_eui_predicted": self.optimal_eui_predicted,
             "optimal_eui_simulated": self.optimal_eui_simulated,
             "optimization_improvement_percent": self.optimization_improvement,
             "optimization_bias_percent": self.optimization_bias,
+            'pv_analysis_enabled': self.config.get('pv_analysis', {}).get('enabled', False),
+            'suitable_surfaces_for_pv': self.suitable_surfaces,
+            'pv_generation_analysis': self.pv_generation_results,
+            'gross_eui_with_pv': self.gross_eui_with_pv,
+            'net_eui_with_pv': self.net_eui_with_pv,
             "sensitivity_indices": self.sensitivity_results,
         }
         result_file = self.work_dir / "pipeline_results.json"
         try:
+            def numpy_converter(obj): # Process NumPy types
+                if isinstance(obj, np.integer): return int(obj)
+                elif isinstance(obj, np.floating): return float(round(obj, 6)) if not np.isnan(obj) else "NaN"
+                elif isinstance(obj, np.ndarray): return obj.tolist()
+                elif isinstance(obj, (np.bool_, bool)): return bool(obj)
+                elif pd.isna(obj): return "NaN"
+                # Process NumPy arrays in SALib output dictionaries
+                if isinstance(obj, dict):
+                    return {k: numpy_converter(v) for k, v in obj.items()}
+                return '<not serializable>'
             with open(result_file, "w") as f:
-                json.dump(results_data, f, indent=4, default=lambda o: '<not serializable>')
+                json.dump(results_data, f, indent=4, default=numpy_converter)
             logging.info(f"Optimization results saved to {result_file}")
         except Exception as e:
             logging.error(f"Error: Failed to save results to {result_file}: {e}")
 
-    def run_full_pipeline(self, run_sens:bool=True, build_model:bool=True, run_opt=True, validate=True, save=True):
+    def run_full_pipeline(self, run_sens:bool=True, build_model:bool=True, run_opt=True, validate=True, run_pv=True, save=True):
         """
         Execute each stage of the entire optimization process sequentially.
 
@@ -728,6 +812,12 @@ class OptimizationPipeline:
         
         if validate:
             self.validate_optimum()
+            if self.optimal_eui_simulated is None and run_pv:
+                logging.error("Error: Optimization validation failed, aborting PV analysis.")
+                return
+
+        if run_pv and self.config.get('pv_analysis', {}).get('enabled', False): # Check if PV analysis is enabled in the configuration
+            self.run_pv_analysis()
         
         if save:
             self.save_results()

@@ -167,11 +167,38 @@ class SimulationResult:
             return None
         try:
             df = pd.read_csv(self.meter_csv_path)
+            if 'Date/Time' in df.columns:
+                df['Date/Time'] = df['Date/Time'].astype(str).str.strip()
+                df['Timestamp'] = pd.to_datetime(df['Date/Time'], format=' %m/%d  %H:%M:%S', errors='coerce') # Note the space in E+ output format
+                df = df.dropna(subset=['Timestamp'])
+                if year: df['Timestamp'] = df['Timestamp'].apply(lambda dt: dt.replace(year=year))
+                df.set_index('Timestamp', inplace=True)
+                # df.drop(columns=['Date/Time'], inplace=True) # Optional
+            else: logging.warning("Warning: 'Date/Time' column not found in the CSV file.")
 
-            if "Date/Time" in df.columns:
-                # Process the "Date/Time" column, remove the space and convert to datetime
-                pass
+            if columns_map: df.rename(columns=columns_map, inplace=True)
+
+            # Unit conversion (J -> kWh or W -> kW)
+            # EnergyPlus variables and Meter output to CSV/ESO are usually J or W
+            for col in df.columns:
+                if isinstance(df[col].iloc[0], (int, float)): # Only process numeric columns
+                    # Determine if it's energy (J) or power (W) - usually look at variable name or E+ documentation
+                    if 'Energy' in col and '[J]' in col: # Assume energy variable output unit is J
+                        df[col] = df[col] / 3_600_000 # J to kWh
+                        # (Optional) Rename column
+                        # df.rename(columns={col: col.replace('[J]', '[kWh]')}, inplace=True)
+                    elif 'Rate' in col and '[W]' in col: # Assume power variable output unit is W
+                        df[col] = df[col] / 1000 # W to kW
+                        # (Optional) Rename column
+                        # df.rename(columns={col: col.replace('[W]', '[kW]')}, inplace=True)
+                    elif '[J/m2]' in col: # Radiant energy density
+                        df[col] = df[col] / 3_600_000 # J/m2 to kWh/m2
+                    elif '[W/m2]' in col: # Radiant power density
+                        df[col] = df[col] / 1000 # W/m2 to kW/m2
+                    # (Add other possible unit conversions)
+            return df
         except Exception as e:
+            print(f"Error: Error processing CSV file '{self.meter_csv_path}': {e}")
             return None
 
     def get_source_eui(self, ng_conversion_factor: float) -> float:

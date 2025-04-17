@@ -72,11 +72,26 @@ CONFIG = {
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 16, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
         "optimization_model": 'ols', # Optimization model example: ['ols', 'rf', etc]
         "ga_population_size": 100, # Population size for genetic algorithm
         "ga_generations": 100, # Number of generations for genetic algorithm
     },
+
+    # PV system settings
+    'pv_analysis': {
+        'enabled': True, # Enable PV analysis process
+        'pv_efficiency': 0.18, # PV module efficiency
+        'pv_coverage': 0.8, # PV module coverage on surfaces (consider gaps)
+        'shadow_calculation_surface_types': ['ROOF', 'WALL'], # Surface types to calculate shadows/radiation (uppercase)
+        'radiation_threshold_high': 1000.0, # High radiation threshold (kWh/m2)
+        'radiation_threshold_low': 0.0,   # Low radiation threshold (kWh/m2)
+        'radiation_score_threshold': 70, # Minimum radiation score (0-100)
+        'max_score': 100.0, # Maximum radiation score
+        'min_score': 0.0,   # Minimum radiation score
+        'pv_output_prefix': 'pv', # PV simulation output prefix
+        'shadow_output_prefix': 'shadow', # Shadow analysis simulation output prefix
+    }
 }
 
 create_directories()

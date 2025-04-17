@@ -3,6 +3,7 @@
 
 import os
 import uuid
+import numpy as np
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
@@ -10,125 +11,10 @@ from fastapi import UploadFile, HTTPException
 from eppy.modeleditor import IDF
 from io import BytesIO
 
-load_dotenv()
-temp_dir = Path(os.getenv("TEMP_DIR", "./temp")) # Use ./temp as default if not set
-temp_dir.mkdir(parents=True, exist_ok=True) # Ensure temp directory exists
-
 # Define the path to the EnergyPlus Data Dictionary file.
 IDD_FILE = Path(__file__).parent.parent.parent / "data" / "Energy+.idd"
 # Set the IDD file path for the eppy library globally.
 IDF.setiddname(str(IDD_FILE)) # Convert Path object to string
-
-# In-memory storage for IDF file data (path and parsed object instance).
-# Keys are UUIDs generated when files are saved.
-idf_storage = {}
-
-async def save_idf_file(file: UploadFile) -> str:
-    """Saves an uploaded IDF file, validates it, stores it temporarily,
-    parses it using eppy, and keeps track of it in memory.
-
-    Args:
-        file: The uploaded IDF file object from FastAPI.
-
-    Returns:
-        A unique identifier (UUID string) for the saved IDF file.
-
-    Raises:
-        HTTPException: If the file is not a .idf file (400).
-        HTTPException: If there's an error reading or parsing the file (500).
-    """
-    if not file.filename or not file.filename.endswith(".idf"):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file format. Please upload a .idf file."
-        )
-
-    try:
-        idf_id = str(uuid.uuid4())
-        file_content = await file.read()
-
-        # Ensure the temp directory exists
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        tmp_path = temp_dir / f"{idf_id}.idf"
-
-        # Save the uploaded file content to a temporary file
-        with open(tmp_path, "wb") as f:
-            f.write(file_content)
-
-        # Initialize the IDF object using the temporary file path
-        # Convert tmp_path to string as IDF constructor expects str
-        idf_instance = IDF(str(tmp_path))
-
-        # Store the path and the parsed IDF instance in memory
-        idf_storage[idf_id] = {
-            "path": str(tmp_path), # Store path as string
-            "instance": idf_instance,
-        }
-
-        return idf_id
-
-    except Exception as e:
-        # Log the detailed error for debugging purposes
-        print(f"Error processing IDF file '{file.filename}': {e}")
-        # Raise a generic server error to the client
-        raise HTTPException(status_code=500, detail="Failed to process IDF file.")
-
-async def get_idf_object(idf_id: str) -> IDF:
-    """Retrieves the parsed eppy IDF object instance using its unique ID.
-
-    Args:
-        idf_id: The unique identifier (UUID string) of the IDF file.
-
-    Returns:
-        The eppy IDF object instance.
-
-    Raises:
-        HTTPException: If no IDF object is found for the given ID (404).
-    """
-    storage_entry = idf_storage.get(idf_id)
-    if not storage_entry:
-        raise HTTPException(status_code=404, detail="IDF object not found.")
-    return storage_entry["instance"]
-
-async def get_idf_path(idf_id: str) -> str:
-    """Retrieves the temporary file path of the stored IDF file using its ID.
-
-    Args:
-        idf_id: The unique identifier (UUID string) of the IDF file.
-
-    Returns:
-        The absolute path (string) to the temporary IDF file.
-
-    Raises:
-        HTTPException: If no IDF object path is found for the given ID (404).
-    """
-    storage_entry = idf_storage.get(idf_id)
-    if not storage_entry:
-        raise HTTPException(status_code=404, detail="IDF object path not found.")
-    return storage_entry["path"]
-
-class MockUploadFile:
-    """A mock object simulating FastAPI's UploadFile for testing purposes."""
-    def __init__(self, filename: str, content: bytes):
-        """Initializes the mock file with a filename and content.
-
-        Args:
-            filename: The simulated name of the uploaded file.
-            content: The byte content of the simulated file.
-        """
-        self.filename = filename
-        self._content = BytesIO(content) # Use a private attribute
-
-    async def read(self) -> bytes:
-        """Reads the entire content of the mock file."""
-        # Reset position in case it was read before, though typically read once.
-        self._content.seek(0)
-        return self._content.read()
-
-    # Add close method if needed by consumers, though not strictly required by UploadFile interface
-    def close(self):
-        """Closes the BytesIO stream."""
-        self._content.close()
 
 # IDF Model operation Class
 class IDFModel:
@@ -153,6 +39,7 @@ class IDFModel:
         else:
             self.idf = eppy_idf_object
         self._zone_names = None
+        self._floor_area = None
 
     def save(self, output_path: str = None):
         """
@@ -276,13 +163,11 @@ class IDFModel:
             run_for_sizing (bool, optional): Whether to run for sizing. Defaults to False.
             run_for_weather (bool, optional): Whether to run for weather. Defaults to True.
         """
-        sim_control = self.idf.getobject(
-            "SimulationControl",
-            "SimulationControl"
-            )
-        if sim_control:
+        sim_control_list = self.idf.idfobjects.get("SimulationControl",[])
+        if sim_control_list:
+            sim_control = sim_control_list[0]
             sim_control.Run_Simulation_for_Sizing_Periods = 'Yes' if run_for_sizing else 'No'
-            sim_control.Run_Simulation_for_Weather_Run_Periods = 'Yes' if run_for_weather else 'No'
+            sim_control.Run_Simulation_for_Weather_File_Run_Periods = 'Yes' if run_for_weather else 'No'
 
             # Log the changes
             logging.info("Applied simulation control settings to IDF object.")
@@ -325,7 +210,7 @@ class IDFModel:
             raise ValueError("Wall insulationR-value must be greater than 0.")
         
         # Define the wall insulation material
-        insu_mat_name = f"ExteriorInsulation{r_value_si}"
+        insu_mat_name = f"ExteriorInsulation_R{r_value_si}"
         self.idf.newidfobject(
             "Material:NoMass",
             Name = insu_mat_name,
@@ -359,6 +244,7 @@ class IDFModel:
                 exterior_surfaces.append(surf.Name)
 
         # Apply Moveable Insulation to all exterior surfaces
+        self._remove_objects_by_type(['SurfaceControl:MovableInsulation']) # Remove existing movable insulation objects
         for surf_name in exterior_surfaces:
             self.idf.newidfobject(
                 "SurfaceControl:MovableInsulation",
@@ -598,7 +484,102 @@ class IDFModel:
 
         # Log the changes
         logging.info(f"Applied natural ventilation to {len(zone_names)} zones. {opening_area_m2} m2 of opening area for each zone.")
+        
+    def get_surface_area(self, surface_name:str):
+        """
+        Return the area of the specified surface.
 
+        Args:
+            surface_name (str): The name of the surface to calculate the area for.
+
+        Returns:
+            float: The surface area in square meters.
+        """
+        surface = self.idf.getobject('BuildingSurface:Detailed'.upper(), surface_name)
+        if not surface:
+            return 0.0
+        return surface.area
+        
+    def get_total_floor_area(self):
+        """
+        Get the total floor area of the building by summing zone areas.
+        If a zone's area is 'autocalculate', it calculates the area from the
+        geometry of its floor surfaces ('BuildingSurface:Detailed' with Surface_Type 'Floor').
+
+        Returns:
+            float: The total floor area in square meters. Returns 1.0 if calculation fails or yields zero.
+        """
+        # Check cache first
+        if self._floor_area is not None:
+            return self._floor_area
+
+        total_area = 0.0
+        zones = self.idf.idfobjects.get('ZONE', [])
+        # Get all surfaces once to avoid repeated lookups inside the loop
+        all_surfaces = self.idf.idfobjects.get('BUILDINGSURFACE:DETAILED', [])
+
+        if not zones:
+                logging.warning("No ZONE objects found in the IDF file.")
+                self._floor_area = 1.0 # Set cache to default
+                return 1.0
+
+        for zone in zones:
+            zone_area = 0.0
+            zone_name = zone.Name
+            floor_area_field = getattr(zone, 'Floor_Area', 'autocalculate') # Default to autocalculate if field missing
+
+            # Try converting the field value to float first
+            try:
+                zone_area = float(floor_area_field)
+                if zone_area > 0:
+                    total_area += zone_area
+                    # Log the source of the area
+                    # logging.debug(f"Zone '{zone_name}': Using explicit Floor_Area = {zone_area} m2.")
+                    continue # Go to the next zone
+                else:
+                    # Handle cases like 0.0 explicitly entered, treat as autocalculate needed
+                    logging.debug(f"Zone '{zone_name}': Explicit Floor_Area is {zone_area}, treating as autocalculate.")
+                    floor_area_field = 'autocalculate' # Force recalculation
+            except (ValueError, TypeError):
+                # If conversion fails, it's likely a string like 'autocalculate'
+                if isinstance(floor_area_field, str) and (floor_area_field.lower() == 'autocalculate' or floor_area_field.lower() == ''):
+                    # Calculate area from floor surfaces geometry within this zone
+                    calculated_zone_area = 0.0
+                    zone_floor_surfaces = [
+                        s for s in all_surfaces
+                        if hasattr(s, 'Zone_Name') and s.Zone_Name.lower() == zone_name.lower() # Case-insensitive compare
+                        and hasattr(s, 'Surface_Type') and s.Surface_Type.lower() == 'floor'
+                    ]
+
+                    if not zone_floor_surfaces:
+                            logging.warning(f"Zone '{zone_name}' area is 'autocalculate' but no 'Floor' type surfaces were found for it.")
+                    else:
+                        # logging.debug(f"Zone '{zone_name}': Calculating area from {len(zone_floor_surfaces)} floor surfaces.")
+                        for surface in zone_floor_surfaces:
+                                surface_name = surface.Name
+                                surf_area = surface.area
+                                # logging.debug(f"  - Surface '{surface_name}': Calculated Area = {surf_area} m2.")
+                                calculated_zone_area += surf_area
+
+                    if calculated_zone_area > 0:
+                        zone_area = calculated_zone_area
+                        total_area += zone_area
+                        # logging.debug(f"Zone '{zone_name}': Calculated Floor_Area = {zone_area} m2 from geometry.")
+                    else:
+                        # If geometric calculation failed or yielded zero, log a warning.
+                        # We won't fall back to Sizing:Zone here as the primary method failed.
+                        logging.warning(f"Zone '{zone_name}': Area is 'autocalculate' but geometric calculation yielded {calculated_zone_area:.4f} m2. Area not added.")
+                else:
+                    # Handle other unexpected string values
+                    logging.warning(f"Zone '{zone_name}' has an unsupported Floor_Area value: '{floor_area_field}'. Area not counted.")
+
+        # Cache the result, ensuring it's at least 1.0 if valid area is zero or calculation failed
+        self._floor_area = total_area if total_area > 0 else 1.0
+        if total_area <= 0:
+            logging.warning(f"Calculated total floor area is {total_area:.4f}. Returning default value of 1.0 m2.")
+
+        # logging.info(f"Total calculated building floor area: {self._floor_area} m2.")
+        return self._floor_area
 
 if __name__ == "__main__":
     async def main_test():
