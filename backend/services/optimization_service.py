@@ -723,6 +723,7 @@ class OptimizationPipeline:
                             total_pv_kwh = self.pv_generation_results.get('total_annual_kwh', 0.0)
                             pv_kwh_per_m2 = total_pv_kwh / self.building_floor_area # Calculate the PV generation intensity
                             self.net_eui_with_pv = self.gross_eui_with_pv - pv_kwh_per_m2 # Calculate the net EUI
+                            self.optimization_improvement_with_pv = (self.baseline_eui - self.net_eui_with_pv) / self.baseline_eui * 100
                             logging.info(f"Gross EUI with PV: {self.gross_eui_with_pv:.2f} kWh/m2")
                             logging.info(f"Annual PV generation: {total_pv_kwh:.2f} kWh ({pv_kwh_per_m2:.2f} kWh/m2)")
                             logging.info(f"Net source EUI (Net): {self.net_eui_with_pv:.2f} kWh/m2")
@@ -758,6 +759,7 @@ class OptimizationPipeline:
             'pv_generation_analysis': self.pv_generation_results,
             'gross_eui_with_pv': self.gross_eui_with_pv,
             'net_eui_with_pv': self.net_eui_with_pv,
+            'optimization_improvement_with_pv': self.optimization_improvement_with_pv,
             "sensitivity_indices": self.sensitivity_results,
         }
         result_file = self.work_dir / "pipeline_results.json"

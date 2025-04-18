@@ -228,7 +228,7 @@ class IDFModel:
             self.idf.newidfobject(
                 "Schedule:Compact",
                 Name = sched_name,
-                Schedule_Type_Limits_Name = "Fractional",
+                Schedule_Type_Limits_Name = "Fraction",
                 Field_1 = "Through: 12/31",
                 Field_2 = "For: AllDays",
                 Field_3 = "Until: 24:00",
@@ -552,7 +552,7 @@ class IDFModel:
                     ]
 
                     if not zone_floor_surfaces:
-                            logging.warning(f"Zone '{zone_name}' area is 'autocalculate' but no 'Floor' type surfaces were found for it.")
+                            logging.warning(f"Zone '{zone_name}' Area is 'autocalculate' but no 'Floor' type surfaces were found for it.")
                     else:
                         # logging.debug(f"Zone '{zone_name}': Calculating area from {len(zone_floor_surfaces)} floor surfaces.")
                         for surface in zone_floor_surfaces:
@@ -561,14 +561,14 @@ class IDFModel:
                                 # logging.debug(f"  - Surface '{surface_name}': Calculated Area = {surf_area} m2.")
                                 calculated_zone_area += surf_area
 
-                    if calculated_zone_area > 0:
-                        zone_area = calculated_zone_area
-                        total_area += zone_area
-                        # logging.debug(f"Zone '{zone_name}': Calculated Floor_Area = {zone_area} m2 from geometry.")
-                    else:
-                        # If geometric calculation failed or yielded zero, log a warning.
-                        # We won't fall back to Sizing:Zone here as the primary method failed.
-                        logging.warning(f"Zone '{zone_name}': Area is 'autocalculate' but geometric calculation yielded {calculated_zone_area:.4f} m2. Area not added.")
+                        if calculated_zone_area > 0:
+                            zone_area = calculated_zone_area
+                            total_area += zone_area
+                            # logging.debug(f"Zone '{zone_name}': Calculated Floor_Area = {zone_area} m2 from geometry.")
+                        else:
+                            # If geometric calculation failed or yielded zero, log a warning.
+                            # We won't fall back to Sizing:Zone here as the primary method failed.
+                            logging.warning(f"Zone '{zone_name}': Area is 'autocalculate' but geometric calculation yielded {calculated_zone_area:.4f} m2. Area not added.")
                 else:
                     # Handle other unexpected string values
                     logging.warning(f"Zone '{zone_name}' has an unsupported Floor_Area value: '{floor_area_field}'. Area not counted.")
