@@ -56,7 +56,6 @@ CONFIG = {
     "lighting_reduction_map":{
         "office_large": {1: 0.2, 2: 0.47, 3: 0.53},
         "office_medium": {1: 0.2, 2: 0.47, 3: 0.53},
-        # "office_small": {1: 0.2, 2: 0.47, 3: 0.53},
         "apartment_high_rise": {1: 0.35, 2: 0.45, 3: 0.55},
         "sf": {1: 0.45, 2: 0.5, 3: 0.64},
         "mf": {1: 0.35, 2: 0.45, 3: 0.55},
@@ -72,7 +71,7 @@ CONFIG = {
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 8, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
         "optimization_model": 'ols', # Optimization model example: ['ols', 'rf', etc]
         "ga_population_size": 100, # Population size for genetic algorithm
         "ga_generations": 100, # Number of generations for genetic algorithm
