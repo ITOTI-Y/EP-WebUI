@@ -63,15 +63,15 @@ CONFIG = {
 
     # Simulation settings
     "simulation":{
-        "start_year": 2058,
-        "end_year": 2058,
+        "start_year": 2040,
+        "end_year": 2040,
         "default_output_suffix": "C", # suffix for the output file
         "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit', '.sql'], # files to be cleaned up
     },
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
         "optimization_model": 'ols', # Optimization model example: ['ols', 'rf', etc]
         "ga_population_size": 100, # Population size for genetic algorithm
         "ga_generations": 100, # Number of generations for genetic algorithm

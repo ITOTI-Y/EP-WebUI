@@ -1,21 +1,22 @@
 import logging
 import sys
+from tqdm import tqdm
 from backend.services.optimization_service import OptimizationPipeline
 from config import CONFIG
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.WARNING)
 
 def main():
     target_cities = ['Chicago']
-    target_ssps = [126]
-    target_btypes = ['Office_Small']
+    target_ssps = [126, 245, 370, 434, 585]
+    target_btypes = ["MultiFamilyResidential"]
 
     logging.info("Starting optimization process...")
     logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
     logging.info(f"EnergyPlus executable path = '{CONFIG['paths']['eplus_executable']}'")
 
-    for city in target_cities:
-        for ssp in target_ssps:
+    for city in tqdm(target_cities, desc="Cities"):
+        for ssp in tqdm(target_ssps, desc="SSPs"):
             weather_file = False
             if str(ssp).upper() == "TMY":
                 if any(city.lower() in str(f).lower() for f in CONFIG['paths']['tmy_dir'].glob("*.epw")):
@@ -26,7 +27,7 @@ def main():
             if not weather_file:
                 logging.warning(f"Warning: Weather file for city '{city}' SSP '{ssp}' not found; skipping this scenario.")
                 continue
-            for btype in target_btypes:
+            for btype in tqdm(target_btypes, desc="Building Types"):
                 proto_path_check = False
                 if any(btype.lower() in str(f).lower() for f in CONFIG['paths']['prototypes_dir'].glob("*.idf")):
                     proto_path_check = True

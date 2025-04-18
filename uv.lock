@@ -230,6 +230,7 @@ dependencies = [
     { name = "scipy" },
     { name = "statsmodels" },
     { name = "supabase" },
+    { name = "tqdm" },
 ]
 
 [package.metadata]
@@ -247,6 +248,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.15.2" },
     { name = "statsmodels", specifier = ">=0.14.4" },
     { name = "supabase", specifier = ">=2.11.0" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [[package]]
