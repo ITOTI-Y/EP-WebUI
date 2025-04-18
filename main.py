@@ -21,7 +21,7 @@ def main():
                 if any(city.lower() in str(f).lower() for f in CONFIG['paths']['tmy_dir'].glob("*.epw")):
                     weather_file = True
             else:
-                if any(str(ssp).lower() in str(f).lower() for f in CONFIG['paths']['ftmy_dir'].glob("*.epw")):
+                if any(str(ssp).lower() in str(f).lower() for f in CONFIG['paths']['ftmy_dir'].glob("*.epw")): # Need to add a city check
                     weather_file = True
             if not weather_file:
                 logging.warning(f"Warning: Weather file for city '{city}' SSP '{ssp}' not found; skipping this scenario.")
