@@ -21,7 +21,8 @@ CONFIG = {
         "sensitivity_dir": results_dir / "Sensitivity", # Sensitivity Analysis and Optimization Results Output Directory
         "future_load_dir": results_dir / "FutureLoad", # Future Loads Simulation Output Directory
         "ensemble_dir": results_dir / "Ensemble", # Ensemble Simulation Output Directory
-        "eplus_executable": eplus_dir / "energyplus.exe" # EnergyPlus executable file path
+        "eplus_executable": eplus_dir / "energyplus.exe", # EnergyPlus executable file path
+        "log_dir": results_dir / "Logs", # Log files output directory
         },
     # Constants configuration
     "constants":{

@@ -4,12 +4,16 @@ from tqdm import tqdm
 from backend.services.optimization_service import OptimizationPipeline
 from config import CONFIG
 
-logging.basicConfig(level=logging.WARNING)
+logging.basicConfig(level=logging.WARNING,
+                    filename=CONFIG['paths']['log_dir'] / "optimization.log",
+                    filemode="a",
+                    format="%(asctime)s - %(levelname)s - %(message)s"
+                    )
 
 def main():
     target_cities = ['Chicago']
     target_ssps = [126, 245, 370, 434, 585]
-    target_btypes = ["MultiFamilyResidential"]
+    target_btypes = ["OfficeLarge", "OfficeMedium", "ApartmentHighRise", "SingleFamilyResidential", "MultiFamilyResidential"]
 
     logging.info("Starting optimization process...")
     logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
