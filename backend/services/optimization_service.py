@@ -494,7 +494,7 @@ class OptimizationPipeline:
             model_type (str, optional): Optimization model type. Defaults to None.
         """
         model_type = model_type if model_type else self.config['analysis']['optimization_model']
-        logging.info(f"Building a {model_type} surrogate model...")
+        logging.info(f"Attempting to build a {model_type} surrogate model...")
 
         if self.sensitivity_samples is None:
             samples_file = self.work_dir / 'sensitivity_discrete_results.csv'
@@ -520,18 +520,22 @@ class OptimizationPipeline:
         model_file = self.work_dir / f"surrogate_model_{model_type}.txt"
 
         try:
-            if model_type == 'ols':
+            if model_type.lower() == 'ols':
                 formula = 'eui ~ ' + ' + '.join(self.ecm_names)
                 model = ols(formula, data=df).fit()
                 summary_info = model.summary().as_text()
                 with open(model_file, 'w') as f: f.write(summary_info)
             elif model_type.lower() == 'rf':
-                model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
+                model = RandomForestRegressor(n_estimators=self.config['analysis']['n_estimators'], random_state=self.config['analysis']['random_state'], n_jobs=self.config['constants']['cpu_count_override'])
                 model.fit(X, Y)
                 importances = pd.Series(model.feature_importances_, index=self.ecm_names).sort_values(ascending=False) # Extracting feature importance.
                 summary_info = importances.to_string()
-                importances.to_csv(model_file.replace('.txt', '_importance.csv'))
-                with open(model_file, 'w') as f: f.write("Random Forest Feature Importances:\n" + summary_info)
+                importances.to_csv(model_file.with_name(model_file.stem + '_importance.csv'))
+                model_summary_file = model_file.with_name(model_file.stem + '_summary.txt')
+                with open(model_summary_file, 'w') as f:
+                    f.write(f"Random Forest Feature Importances:\n")
+                    f.write(summary_info)
+                    logging.info(f"Random Forest summary (importances) saved to {model_summary_file}")
             else:
                 logging.warning(f"Warning: The surrogate model type '{model_type}' is not supported. Reverting to Ordinary Least Squares (OLS).")
                 formula = 'eui ~ ' + ' + '.join(self.ecm_names)

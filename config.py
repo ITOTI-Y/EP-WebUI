@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 
 data_dir = pathlib.Path(__file__).parent / "data"
 eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0") # energyplus installation directory
@@ -72,8 +73,10 @@ CONFIG = {
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
-        "optimization_model": 'ols', # Optimization model example: ['ols', 'rf', etc]
+        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
+        "n_estimators": 100, # Number of trees for Random Forest
+        "random_state": 10, # Random state for Random Forest
+        "optimization_model": 'rf', # Optimization model example: ['ols', 'rf', etc]
         "ga_population_size": 100, # Population size for genetic algorithm
         "ga_generations": 100, # Number of generations for genetic algorithm
     },
