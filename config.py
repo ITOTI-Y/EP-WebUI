@@ -51,7 +51,7 @@ CONFIG = {
         "cool_cop": [3.5, 4, 4.5, 5, 5.5, 6], # Cooling Coefficient of Performance
         "cool_air_temp": [10, 12, 14, 16], # Cooling Air Supply Temperature (C)
         "lighting": [1, 2, 3], # Lighting Power Density (W/m2)
-        "vt": [0.6] # Visible Light Transmittance
+        "vt": [0.4, 0.6, 0.7] # Visible Light Transmittance
     },
 
     # Lighting reduction rate
