@@ -3,12 +3,15 @@ import pathlib
 import shutil
 
 data_dir = pathlib.Path(__file__).parent / "data"
-eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0") # energyplus installation directory
+eplus_dir = pathlib.Path("/usr/local/bin/") # energyplus installation directory
 results_dir = data_dir / "Results"
 
 def create_directories():
     for key, value in CONFIG['paths'].items():
-        pathlib.Path(value).mkdir(parents=True, exist_ok=True)
+        if key == "eplus_executable":
+            pass
+        else:
+            pathlib.Path(value).mkdir(parents=True, exist_ok=True)
 
 CONFIG = {
     # Paths configuration
@@ -22,7 +25,7 @@ CONFIG = {
         "sensitivity_dir": results_dir / "Sensitivity", # Sensitivity Analysis and Optimization Results Output Directory
         "future_load_dir": results_dir / "FutureLoad", # Future Loads Simulation Output Directory
         "ensemble_dir": results_dir / "Ensemble", # Ensemble Simulation Output Directory
-        "eplus_executable": eplus_dir / "energyplus.exe", # EnergyPlus executable file path
+        "eplus_executable": eplus_dir / "energyplus", # EnergyPlus executable file path
         "log_dir": results_dir / "Logs", # Log files output directory
         },
     # Constants configuration
@@ -73,7 +76,7 @@ CONFIG = {
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
         "n_estimators": 100, # Number of trees for Random Forest
         "random_state": 10, # Random state for Random Forest
         "optimization_model": 'rf', # Optimization model example: ['ols', 'rf', etc]

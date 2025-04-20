@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.WARNING,
 def main():
     target_cities = ['Chicago']
     target_ssps = [126, 245, 370, 434, 585]
-    target_btypes = ["OfficeMedium"]
+    target_btypes = ["OfficeMedium", "OfficeLarge", "ApartmentHighRise", "SingleFamilyResidential", "MultiFamilyResidential"]
 
     logging.info("Starting optimization process...")
     logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
