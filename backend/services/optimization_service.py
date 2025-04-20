@@ -199,8 +199,7 @@ class OptimizationPipeline:
                 if reduction_factor < 1.0:
                     idf_model.apply_lighting_reduction(reduction_factor, btype_key)
                 elif reduction_factor >= 1.0 and lighting_level != 0 :
-                    logging.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required \
-                                    for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
+                    logging.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
                 
             elif param_name in ['shgc', 'win_u', 'vt']:
                 # Process Window properties
@@ -315,34 +314,6 @@ class OptimizationPipeline:
             result_dict['eui'] = eui
             return result_dict
         else:
-            return None
-
-    def _run_sensitivity_analysis(self, params_array: np.ndarray, sample_index: int) -> dict|None:
-        """
-        Run a sensitivity analysis for a specific sample index.
-
-        Args:
-            params_array (np.ndarray): Array of parameters to analyze
-            sample_index (int): Index of the sample to analyze
-        
-        Returns:
-            dict|None: Dictionary containing the sensitivity analysis results or None if the simulation fails
-        """
-
-        # Convert the sample index to a parameter dictionary
-        params_dict = self._params_array_to_dict(params_array[sample_index])
-
-        # Run the simulation
-        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=f"sensitivity_{sample_index}", is_baseline=False)
-        params_dict = self._params_array_to_dict(params_array)
-        run_id = f"sample_{sample_index}"
-        eui = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id, is_baseline=False)
-        if eui:
-            result_dict = params_dict.copy()
-            result_dict['eui'] = eui
-            return result_dict
-        else:
-            logging.error(f"Sensitivity analysis failed for sample {sample_index}")
             return None
         
     def _refill_continuous_space(self, continuous_samples: np.ndarray, discrete_results_df: pd.DataFrame) -> np.ndarray:
