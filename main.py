@@ -4,7 +4,7 @@ from tqdm import tqdm
 from backend.services.optimization_service import OptimizationPipeline
 from config import CONFIG
 
-logging.basicConfig(level=logging.WARNING,
+logging.basicConfig(level=logging.INFO,
                     filename=CONFIG['paths']['log_dir'] / "optimization.log",
                     filemode="a",
                     format="%(asctime)s - %(levelname)s - %(message)s"
