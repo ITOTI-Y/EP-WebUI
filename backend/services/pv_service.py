@@ -32,8 +32,6 @@ class PVManager:
         self.pv_config = config.get('pv_analysis', {})
         if not self.pv_config:
             print("Warning: 'pv_analysis' section missing in config.")
-        elif not self.config.get("use_pvwatts", False):
-            logging.warning("Warning: 'use_pvwatts' in the 'pv_analysis' configuration is not set to True, but PVManager expects to use PVWatts.")
 
     def _add_shadow_outputs_to_idf(self, idf_model: IDFModel):
         """Add output variables required for shadow analysis to the IDF object (W/m2)."""
