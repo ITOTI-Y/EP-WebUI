@@ -56,11 +56,11 @@ CONFIG = {
 
     # Lighting reduction rate
     "lighting_reduction_map":{
-        "office_large": {1: 0.2, 2: 0.47, 3: 0.53},
-        "office_medium": {1: 0.2, 2: 0.47, 3: 0.53},
-        "apartment_high_rise": {1: 0.35, 2: 0.45, 3: 0.55},
-        "sf": {1: 0.45, 2: 0.5, 3: 0.64},
-        "mf": {1: 0.35, 2: 0.45, 3: 0.55},
+        "officelarge": {1: 0.2, 2: 0.47, 3: 0.53},
+        "officemedium": {1: 0.2, 2: 0.47, 3: 0.53},
+        "apartmenthighrise": {1: 0.35, 2: 0.45, 3: 0.55},
+        "singlefamilyresidential": {1: 0.45, 2: 0.5, 3: 0.64},
+        "multifamilyresidential": {1: 0.35, 2: 0.45, 3: 0.55},
     },
 
     # Simulation settings
@@ -68,12 +68,13 @@ CONFIG = {
         "start_year": 2040,
         "end_year": 2040,
         "default_output_suffix": "C", # suffix for the output file
-        "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit', '.sql'], # files to be cleaned up
+        "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit'], # Files to be cleaned up (except .sql)
     },
 
     # sensitivity analysis settings
     "analysis":{
-        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
+        "output_intermediary_files": True, # Output intermediary files
+        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
         "n_estimators": 100, # Number of trees for Random Forest
         "random_state": 10, # Random state for Random Forest
         "optimization_model": 'rf', # Optimization model example: ['ols', 'rf', etc]
@@ -86,6 +87,7 @@ CONFIG = {
         'enabled': True, # Enable PV analysis process
         'pv_efficiency': 0.18, # PV module efficiency
         'pv_coverage': 0.8, # PV module coverage on surfaces (consider gaps)
+        'pv_inverter_efficiency': 0.96, # PV inverter efficiency
         'shadow_calculation_surface_types': ['ROOF', 'WALL'], # Surface types to calculate shadows/radiation (uppercase)
         'radiation_threshold_high': 1000.0, # High radiation threshold (kWh/m2)
         'radiation_threshold_low': 600.0,   # Low radiation threshold (kWh/m2)
@@ -94,6 +96,14 @@ CONFIG = {
         'min_score': 0.0,   # Minimum radiation score
         'pv_output_prefix': 'pv', # PV simulation output prefix
         'shadow_output_prefix': 'shadow', # Shadow analysis simulation output prefix
+
+        "use_pvwatts": True, # Use PVWatts to calculate PV system performance
+        "pvwatts_module_type": "Standard", # PVWatts module type: Standard, Premium, ThinFilm
+        "pvwatts_array_type": "FixedOpenRack", # FixedOpenRack, FixedRoofMounted, OneAxis, OneAxisBacktracking, TwoAxis
+        "pvwatts_system_losses": 0.14, # System losses (excluding inverter efficiency, and encompassing factors like wiring and soiling) (0 to 1)
+        "pvwatts_dc_ac_ratio": 1.1, # DC-to-AC Ratio (Impacting Peak Shaving)
+        "pvwatts_inverter_efficiency": 0.96, # Inverter rated efficiency (0 to 1)
+        "pvwatts_ground_coverage_ratio": 0.4, # Ground Coverage (Tracking Systems Only)
     }
 }
 

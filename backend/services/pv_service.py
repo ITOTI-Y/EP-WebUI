@@ -24,7 +24,7 @@ class PVManager:
             weather_path (str): The path to the weather file.
             base_work_dir (str): The base working directory.
         """
-        self.base_idf_model = optimized_idf_model
+        self.optimized_idf_model = optimized_idf_model
         self.runner = runner
         self.config = config
         self.weather_path = weather_path
@@ -32,6 +32,8 @@ class PVManager:
         self.pv_config = config.get('pv_analysis', {})
         if not self.pv_config:
             print("Warning: 'pv_analysis' section missing in config.")
+        elif not self.config.get("use_pvwatts", False):
+            logging.warning("Warning: 'use_pvwatts' in the 'pv_analysis' configuration is not set to True, but PVManager expects to use PVWatts.")
 
     def _add_shadow_outputs_to_idf(self, idf_model: IDFModel):
         """Add output variables required for shadow analysis to the IDF object (W/m2)."""
@@ -91,7 +93,7 @@ class PVManager:
         shadow_output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            temp_idf = copy(self.base_idf_model.idf)
+            temp_idf = copy(self.optimized_idf_model.idf)
             shadow_idf = IDFModel(shadow_idf_path, eppy_idf_object=temp_idf)
             self._add_shadow_outputs_to_idf(shadow_idf)
             shadow_idf.save()
@@ -116,7 +118,7 @@ class PVManager:
             target_surface_types = [s.upper() for s in self.pv_config.get(
                 'shadow_calculation_surface_types', ['ROOF'])]
             suitable_surfaces = []
-            all_surfaces = self.base_idf_model.idf.idfobjects.get(
+            all_surfaces = self.optimized_idf_model.idf.idfobjects.get(
                 "BUILDINGSURFACE:DETAILED", [])
 
             for surface in all_surfaces:
@@ -148,7 +150,7 @@ class PVManager:
                             # --- Calculate score ---
                             radiation_score = self._calculate_radiation_score(
                                 annual_kwh_per_m2)  # Use kWh/m2
-                            area = self.base_idf_model.get_surface_area(
+                            area = self.optimized_idf_model.get_surface_area(
                                 surface_name)  # Get the area of the surface
 
                             # 确保面积有效
@@ -182,23 +184,158 @@ class PVManager:
             traceback.print_exc()
             return None
 
-    #
+    # def add_pv_to_idf(self, suitable_surfaces: list[dict], pv_run_id: str) -> str|None:
+    #     """
+    #     Adds a PVWatts system to the optimized IDF model object, 
+    #     clearing any existing PV-related objects beforehand.
+
+    #     Args:
+    #         suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+    #         pv_run_id (str): The ID of the PV run.
+
+    #     Returns:
+    #         str|None: The path to the modified IDF file.
+    #     """
+    #     if not suitable_surfaces:
+    #         logging.info("Info: No suitable surfaces provided, not adding PV systems.")
+    #         return self.optimized_idf_model.idf_path
+        
+    #     if not self.config.get("use_pvwatts", False):
+    #         logging.error("Error: PVWatts configuration is disabled ('use_pvwatts' is not True), and therefore a PVWatts system cannot be added.")
+    #         return None
+        
+    #     logging.info(f"--- Purging legacy PV objects and adding {len(suitable_surfaces)} PVWatts systems to the IDF ---")
+    #     pv_output_dir = self.work_dir / pv_run_id
+    #     pv_output_dir.mkdir(parents=True, exist_ok=True)
+    #     pv_idf_path = pv_output_dir / f"{pv_run_id}.idf"
+
+    #     pv_efficiency = self.pv_config.get('pv_efficiency', 0.18)
+    #     pv_coverage = self.pv_config.get('pv_coverage', 0.8)
+    #     module_type = self.pv_config.get('pvwatts_module_type', 'Standard')
+    #     array_type = self.pv_config.get('pvwatts_array_type', 'FixedOpenRack')
+    #     system_losses = self.pv_config.get('pvwatts_system_losses', 0.14)
+    #     dc_ac_ratio = self.pv_config.get('pvwatts_dc_ac_ratio', 1.1)
+    #     inverter_efficiency = self.pv_config.get('pvwatts_inverter_efficiency', 0.96)
+    #     gcr = self.pv_config.get('pvwatts_ground_coverage_ratio', 0.4)
+
+    #     # Define new, dedicated PV component names
+    #     pv_elcd_name = "PV_System_Load_Center"
+    #     pv_elcg_name = "PV_System_Generator_List"
+    #     pv_inverter_name = "PV_System_PVWatts_Inverter" 
+
+    #     try:
+    #         temp_idf_object = copy(self.optimized_idf_model.idf)
+    #         idf_model = IDFModel(pv_idf_path, eppy_idf_object=temp_idf_object)
+    #         idf = idf_model.idf
+
+    #         # --- 1. Clear all existing PV-related objects ---
+    #         # Includes Photovoltaic, PVWatts, and related performance, distribution centers, lists, and inverter objects.
+    #         logging.info("--- Purging legacy PV related objects ---")
+    #         specific_names_to_remove = [pv_elcd_name,
+    #                                     pv_elcg_name,
+    #                                     pv_inverter_name,
+    #                                     "PV_System_Simple_Inverter"]
+    #         for name in specific_names_to_remove:
+    #             for obj_type in ["ElectricLoadCenter:Distribution",
+    #                              "ElectricLoadCenter:Generators",
+    #                              "ElectricLoadCenter:Inverter:Simple",
+    #                              "ElectricLoadCenter:Inverter:PVWatts"]:
+    #                 try:
+    #                     obj = idf.getobject(obj_type.upper(), name)
+    #                     if obj:
+    #                         idf.removeidfobject(obj)
+    #                         logging.info(f"The specified {obj_type} '{name}' has been successfully removed.")
+    #                 except Exception as e:
+    #                     logging.info(f"Encountered an issue while attempting to remove the specified {obj_type} '{name}' (it may not exist): {e}")
+
+    #         # Remove PV Generators and Performance Objects by Type
+    #         pv_types_to_remove = [
+    #             "Generator:Photovoltaic",
+    #             "PhotovoltaicPerformance:Simple",
+    #             "PhotovoltaicPerformance:EquivalentOne-Diode",
+    #             "PhotovoltaicPerformance:Sandia",
+    #             "Generator:PVWatts"
+    #         ]
+    #         idf_model._remove_objects_by_type(pv_types_to_remove)
+    #         logging.info("Completes the clearing of objects related to existing PVs.")
+
+    #         # --- 2. Create PVWatts Inverter (ElectricLoadCenter:Inverter:PVWatts) ---
+    #         logging.info(f"Creating PVWatts Inverter: {pv_inverter_name}")
+    #         idf.newidfobject(
+    #             "ElectricLoadCenter:Inverter:PVWatts",
+    #             Name=pv_inverter_name,
+    #             DC_to_AC_Size_Ratio=dc_ac_ratio,
+    #             Inverter_Efficiency=inverter_efficiency
+    #         )
+
+    #         # --- 3. Creating a list of generators (ElectricLoadCenter:Generators) ---
+    #         logging.info(f"Creating generator list: {pv_elcg_name}")
+    #         pv_elcg = idf.newidfobject(
+    #             "ElectricLoadCenter:Generators",
+    #             Name=pv_elcg_name
+    #             # Fill the generator later
+    #         )
+
+    #         # --- 4. Creation of distribution centers (ElectricLoadCenter:Distribution) ---
+    #         logging.info(f"Create distribution center: {pv_elcd_name}")
+    #         idf.newidfobject(
+    #             "ElectricLoadCenter:Distribution",
+    #             Name=pv_elcd_name,
+    #             Generator_List_Name=pv_elcg_name,
+    #             Generator_Operation_Scheme_Type="Baseload",
+    #         )
+
 
     def add_pv_to_idf(self, suitable_surfaces: list[dict], pv_run_id: str) -> str | None:
-        """Add PV systems to the base IDF model object."""
+        """
+        Adds a PV system to the base IDF model objects.
+        All existing PV-related objects are cleared before adding.
+
+        Args:
+            suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+            pv_run_id (str): The ID of the PV run.
+
+        Returns:
+            str | None: The path to the modified IDF file.
+        """
         if not suitable_surfaces:
-            logging.info(
-                "Info: No suitable surfaces provided, not adding PV systems.")
-            return self.base_idf_model.idf_path
-        logging.info(
-            f"--- Adding {len(suitable_surfaces)} PV systems to IDF ---")
-        idf = copy(self.base_idf_model.idf)
+            logging.info("Info: No suitable surfaces provided, not adding PV systems.")
+            return self.optimized_idf_model.idf_path
+        logging.info(f"--- Adding {len(suitable_surfaces)} PV systems to IDF ---")
+
+        # PV Output Path Setup
         pv_output_dir = self.work_dir / pv_run_id
         pv_output_dir.mkdir(parents=True, exist_ok=True)
+        pv_idf_path = pv_output_dir / f"{pv_run_id}.idf"
+
+        # Copy base IDF model
+        try:
+            idf_object_to_modify = copy(self.optimized_idf_model.idf)
+        except Exception as e:
+            logging.error(f"Error: Error copying base IDF model: {e}")
+            return None
+
+        idf_model = IDFModel(str(pv_idf_path), eppy_idf_object=idf_object_to_modify)
+        idf = idf_model.idf
+
+        logging.info(f"Clearing existing PV-related objects...")
+        objects_to_remove = [
+            "Generator:Photovoltaic",
+            "PhotovoltaicPerformance:Simple",
+            "PhotovoltaicPerformance:EquivalentOne-Diode",
+            "PhotovoltaicPerformance:Sandia",
+            "Generator:PVWatts",
+            "ElectricLoadCenter:Inverter:Simple",
+            "ElectricLoadCenter:Inverter:PVWatts",
+        ]
+        idf_model.remove_objects_by_type(objects_to_remove)
+        logging.info("Successfully cleared existing PV-related objects.")
+
         pv_config = self.pv_config
         pv_efficiency = pv_config.get('pv_efficiency', 0.18)
         pv_coverage = pv_config.get('pv_coverage', 0.8)
-        pv_idf_path = pv_output_dir / f"{pv_run_id}.idf"
+        pv_inverter_efficiency = pv_config.get('pv_inverter_efficiency', 0.96)
+
 
         try:
             # --- Defining new, dedicated PV component names ---
@@ -207,77 +344,38 @@ class PVManager:
             pv_elcg_name = "PV_System_Generator_List"  # New generator list name
             pv_inverter_name = "PV_System_Simple_Inverter"  # New inverter name
 
-            # --- 1. Find or create *new* ElectricLoadCenter:Distribution ---
-            pv_elcd = idf.getobject(
-                "ElectricLoadCenter:Distribution".upper(), pv_elcd_name)
-            if not pv_elcd:
-                logging.info(f"Create new distribution center: {pv_elcd_name}")
-                pv_elcd = idf.newidfobject(
-                    "ElectricLoadCenter:Distribution",
-                    Name=pv_elcd_name,
-                    # Or FollowThermal, FollowThermalLimitElectrical
-                    Generator_Operation_Scheme_Type="Baseload",
-                    Generator_List_Name=pv_elcg_name,  # Associate with new generator list
-                    Electrical_Buss_Type="DirectCurrentWithInverter",  # Specify inverter required
-                    Inverter_Name=pv_inverter_name  # Associate with new inverter
-                )
-            else:
-                # If it exists, ensure it is associated with the correct list and inverter (if needed, overwrite)
-                logging.info(f"Use existing distribution center: {pv_elcd_name}")
-                if hasattr(pv_elcd, 'Generator_List_Name') and pv_elcd.Generator_List_Name != pv_elcg_name:
-                    logging.warning(
-                        f"Warning: Distribution center {pv_elcd_name} is associated with a different generator list ({pv_elcd.Generator_List_Name}). Attempting to update.")
-                    pv_elcd.Generator_List_Name = pv_elcg_name
-                if hasattr(pv_elcd, 'Inverter_Name') and pv_elcd.Inverter_Name != pv_inverter_name:
-                    logging.warning(
-                        f"Warning: Distribution center {pv_elcd_name} is associated with a different inverter ({pv_elcd.Inverter_Name}). Attempting to update.")
-                    pv_elcd.Inverter_Name = pv_inverter_name
-                if hasattr(pv_elcd, 'Electrical_Buss_Type') and pv_elcd.Electrical_Buss_Type != "DirectCurrentWithInverter":
-                    logging.warning(
-                        f"Warning: Distribution center {pv_elcd_name} has a non-DirectCurrentWithInverter buss type. Attempting to update.")
-                    pv_elcd.Electrical_Buss_Type = "DirectCurrentWithInverter"
+            # --- 1. Create *new* ElectricLoadCenter:Distribution ---
+            logging.info(f"Creating new ElectricLoadCenter:Distribution center: {pv_elcd_name}")
+            pv_elcd = idf.newidfobject(
+                "ElectricLoadCenter:Distribution",
+                Name=pv_elcd_name,
+                Generator_Operation_Scheme_Type="Baseload", 
+                Generator_List_Name=pv_elcg_name,  # Associate with new generator list
+                Electrical_Buss_Type="DirectCurrentWithInverter", # Specify inverter required
+                Inverter_Name=pv_inverter_name  # Associate with new inverter
+            )
 
-            # --- 2. Find or create *new* ElectricLoadCenter:Generators ---
-            pv_elcg = idf.getobject(
-                "ElectricLoadCenter:Generators".upper(), pv_elcg_name)
-            if not pv_elcg:
-                logging.info(f"Create new generator list: {pv_elcg_name}")
-                pv_elcg = idf.newidfobject(
-                    "ElectricLoadCenter:Generators",
-                    Name=pv_elcg_name
-                    # Initialize empty, add generators later
-                )
-            else:
-                # If it exists, clear the old generator list to avoid duplicate additions (or use a more intelligent update logic)
-                logging.info(f"Use existing generator list: {pv_elcg_name}. Will clear and re-add PV systems.")
-                for i in range(1, 101):  # Assuming a maximum of 100.
-                    gen_name_field = f"Generator_{i}_Name"
-                    gen_type_field = f"Generator_{i}_Object_Type"
-                    if hasattr(pv_elcg, gen_name_field):
-                        setattr(pv_elcg, gen_name_field, "")  # Clear name
-                        if hasattr(pv_elcg, gen_type_field):
-                            setattr(pv_elcg, gen_type_field, "")  # Clear type
-                    else:
-                        break  # No more fields
+            # --- 2. create *new* ElectricLoadCenter:Generators ---
+            logging.info(f"Creating new ElectricLoadCenter:Generators: {pv_elcg_name}")
+            pv_elcg = idf.newidfobject(
+                "ElectricLoadCenter:Generators",
+                Name=pv_elcg_name 
+                # Initialize empty, add generators later
+            )
 
-            # --- 3. Find or create compatible inverter ---
-            # Using ElectricLoadCenter:Inverter:Simple as an example
-            pv_inverter = idf.getobject(
-                "ElectricLoadCenter:Inverter:Simple".upper(), pv_inverter_name)
-            if not pv_inverter:
-                logging.info(f"Create new simple inverter: {pv_inverter_name}")
-                pv_inverter = idf.newidfobject(
-                    "ElectricLoadCenter:Inverter:Simple",
-                    Name=pv_inverter_name,
-                    Availability_Schedule_Name="",  # Assume always available
-                    Inverter_Efficiency=0.96  # Typical inverter efficiency
-                    # Other parameters can use default values
-                )
-            else:
-                logging.info(f"Use existing inverter: {pv_inverter_name}")
+            # --- 3. Create compatible inverter ---
+            logging.info(f"Creating new ElectricLoadCenter:Inverter:Simple: {pv_inverter_name}")
+            pv_inverter = idf.newidfobject(
+                "ElectricLoadCenter:Inverter:Simple",
+                Name=pv_inverter_name,
+                Availability_Schedule_Name="", # Assume always available (if need Schedule, need to define or reference in advance)
+                Inverter_Efficiency=pv_inverter_efficiency, # Typical inverter efficiency
+                # Other parameters can use default values
+            )
 
             # --- 4. Add PV systems and output variables for each suitable surface ---
             added_pv_details = []
+            logging.info(f"Adding Generator:Photovoltaic objects for {len(suitable_surfaces)} surfaces...")
             for i, surface_info in enumerate(suitable_surfaces):
                 surface_name = surface_info["name"]
                 pv_name = f"PV_{surface_name.replace(' ', '_').replace(':','_')}"
@@ -331,22 +429,10 @@ class PVManager:
                 })
 
             # --- 5. (Optional) Remove or modify old "GENERATOR" load center ---
-            old_generator_elcd_list = [obj for obj in idf.idfobjects.get("ElectricLoadCenter:Distribution".upper()) if obj.Name != "PV_System_Load_Center"]
+            old_generator_elcd_list = [obj for obj in idf.idfobjects.get("ElectricLoadCenter:Distribution".upper()) 
+                                        if obj.Name != pv_elcd_name] # Exclude the one we just created
             if old_generator_elcd_list:
-                for obj in old_generator_elcd_list:
-                    logging.warning(f"Warning: Detected old ElectricLoadCenter:Distribution named '{obj.Name}'.")
-                    associated_gen_list_name = getattr(obj, 'Generator_List_Name', None)
-                    associated_inverter_name = getattr(obj, 'Inverter_Name', None)
-                    try:
-                        idf.removeidfobject(obj)
-                        if associated_gen_list_name:
-                            old_gen_list = idf.getobject("ElectricLoadCenter:Generators".upper(), associated_gen_list_name)
-                            if old_gen_list: idf.removeidfobject(old_gen_list)
-                        if associated_inverter_name:
-                            old_inverter = idf.getobject("ElectricLoadCenter:Inverter:PVWatts".upper(), associated_inverter_name)
-                            if old_inverter: idf.removeidfobject(old_inverter)
-                    except Exception as remove_e:
-                        logging.error(f"Error removing old '{obj.Name}' related objects: {remove_e}")
+                logging.warning(f"Warning: Detected other ElectricLoadCenter:Distribution objects: {[obj.Name for obj in old_generator_elcd_list]}. These objects were not automatically removed, please check if manual processing is needed.")
 
             # --- 6. Save modified IDF ---
             self.base_idf_model.save(pv_idf_path)

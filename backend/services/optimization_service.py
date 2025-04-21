@@ -218,7 +218,7 @@ class OptimizationPipeline:
                     # Only update VT while keeping U-value and SHGC the same
                     pass # Not implemented yet
 
-    def _run_single_simulation_internal(self, params_dict: dict={}, run_id: str=None, is_baseline:bool=False):
+    def _run_single_simulation_internal(self, params_dict: dict={}, run_id: str=None, is_baseline:bool=False, output_intermediary_files:bool=True):
         """
         Set up, execute, and analyze a single EnergyPlus simulation.
 
@@ -226,6 +226,7 @@ class OptimizationPipeline:
             params_dict (dict, optional): A dictionary containing ECM parameter values. An empty dictionary signifies the baseline run. Defaults to {}.
             run_id (str, optional): Run identifier for naming output subdirectories and file prefixes.. Defaults to None.
             is_baseline (bool, optional): Explicitly designated as a benchmark run. Defaults to False.
+            output_intermediary_files (bool, optional): Whether to output intermediary files. Defaults to True.
         """
 
         run_label = str(run_id) if run_id is not None else 'baseline' if is_baseline else 'ecm_run'
@@ -269,6 +270,8 @@ class OptimizationPipeline:
                 eui = result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
                 if eui is None:
                     logging.error(f"Failed to calculate source EUI for run {run_label}")
+                if not output_intermediary_files:
+                    shutil.rmtree(run_dir, ignore_errors=True)
                 return eui, floor_area
             else:
                 logging.error(f"Simulation failed for run {run_label}: {message}")
@@ -308,7 +311,8 @@ class OptimizationPipeline:
         """
         params_dict = self._params_array_to_dict(params_array)
         run_id = f"sample_{sample_index}"
-        eui, _ = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id)
+        eui, _ = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id, output_intermediary_files=False)
+        logging.info(f"Completed sample {sample_index} with EUI: {eui}")
         if eui is not None:
             result_dict = params_dict.copy()
             result_dict['eui'] = eui
