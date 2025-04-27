@@ -24,6 +24,8 @@ CONFIG = {
         "ensemble_dir": results_dir / "Ensemble", # Ensemble Simulation Output Directory
         "eplus_executable": eplus_dir / "energyplus.exe", # EnergyPlus executable file path
         "log_dir": results_dir / "Logs", # Log files output directory
+        "eui_data_dir": results_dir / "EUI_Data", # EUI prediction data directory
+        "eui_models_dir": results_dir / "EUI_Models", # EUI prediction models directory
         },
     # Constants configuration
     "constants":{
@@ -104,6 +106,29 @@ CONFIG = {
         "pvwatts_dc_ac_ratio": 1.1, # DC-to-AC Ratio (Impacting Peak Shaving)
         "pvwatts_inverter_efficiency": 0.96, # Inverter rated efficiency (0 to 1)
         "pvwatts_ground_coverage_ratio": 0.4, # Ground Coverage (Tracking Systems Only)
+    },
+    
+    'azure_docker': {
+        'enabled': True, # Enable Azure Docker container simulation
+        'api_endpoint': 'https://api.example.com/energyplus', # Azure Docker container API endpoint
+        'api_key': '', # Azure Docker container API key
+        'timeout': 300, # Timeout for API requests in seconds
+        'retry_count': 3, # Number of retries for failed API requests
+        'retry_delay': 5, # Delay between retries in seconds
+    },
+    
+    # EUI prediction settings
+    'eui_prediction': {
+        'enabled': True, # Enable EUI prediction
+        'model_type': 'gnn', # Model type: 'gnn' or 'mlp'
+        'hidden_channels': 64, # Number of hidden channels in GNN
+        'learning_rate': 0.001, # Learning rate for model training
+        'epochs': 100, # Number of epochs for model training
+        'batch_size': 32, # Batch size for model training
+        'validation_split': 0.2, # Validation split ratio
+        'test_split': 0.1, # Test split ratio
+        'early_stopping_patience': 10, # Early stopping patience
+        'save_best_model': True, # Save best model during training
     }
 }
 
