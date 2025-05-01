@@ -4,120 +4,194 @@ import json
 import logging
 import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from .azure_service import AzureDockerService
+from supabase import create_client, Client
 
 
 class EUIDataPipeline:
     """
-    Manages the collection and organization of EUI simulation data.
+    Manages the collection (via Azure) and preparation (from Supabase)
+    of EUI simulation data.
     """
-    
+
     def __init__(self, config: dict):
         """
         Initialize the EUI data pipeline.
-        
+
         Args:
-            config (dict): Configuration dictionary
+            config (dict): Configuration dictionary containing paths, Azure settings,
+                           and Supabase connection details (e.g., under a 'supabase' key).
+                           Expected Supabase keys: 'url', 'key', 'table'.
         """
         self.config = config
-        self.azure_service = AzureDockerService(config)
-        self.results_dir = config['paths']['results_dir'] / 'EUI_Data'
+
+        # --- 本地结果目录 ---
+        self.results_dir = Path(
+            config['paths']['results_dir']) / 'EUI_Data'  # 确保路径存在
         self.results_dir.mkdir(parents=True, exist_ok=True)
-        
-    def collect_data_for_building_types(self, city: str, ssp: int, building_types: List[str]) -> pd.DataFrame:
-        """
-        Collect simulation data for multiple building types.
-        
-        Args:
-            city (str): City name
-            ssp (int): SSP scenario
-            building_types (List[str]): List of building types to simulate
-            
-        Returns:
-            pd.DataFrame: DataFrame containing simulation results
-        """
-        results = []
-        
-        for btype in building_types:
-            try:
-                logging.info(f"Collecting data for {btype} in {city} under SSP {ssp}")
-                result = self.azure_service.simulate_building_type(city, ssp, btype)
-                results.append(result)
-                
-                self._save_result(result)
-                
-            except Exception as e:
-                logging.error(f"Error collecting data for {btype}: {e}")
-                continue
-                
-        df = pd.DataFrame(results)
-        
-        output_file = self.results_dir / f"{city}_{ssp}_all_buildings.csv"
-        df.to_csv(output_file, index=False)
-        logging.info(f"Saved aggregated results to {output_file}")
-        
-        return df
-        
-    def _save_result(self, result: Dict[str, Any]):
-        """
-        Save individual simulation result.
-        
-        Args:
-            result (Dict[str, Any]): Simulation result
-        """
-        city = result['city']
-        ssp = result['ssp']
-        btype = result['building_type']
-        
-        output_file = self.results_dir / f"{city}_{ssp}_{btype}.json"
-        
-        result_to_save = result.copy()
-        if 'raw_results' in result_to_save:
-            result_to_save['raw_results'] = str(result_to_save['raw_results'])
-            
-        with open(output_file, 'w') as f:
-            json.dump(result_to_save, f, indent=2)
-            
-        logging.info(f"Saved result for {btype} to {output_file}")
-        
+
+        # --- Supabase 配置 ---
+        self.supabase_url: Optional[str] = config.get(
+            'supabase', {}).get('url')
+        self.supabase_key: Optional[str] = config.get(
+            'supabase', {}).get('key')
+        self.supabase_table: Optional[str] = config.get(
+            'supabase', {}).get('table')
+        self.supabase: Optional[Client] = None  # Supabase 客户端
+
+        if not all([self.supabase_url, self.supabase_key, self.supabase_table]):
+            logging.warning("Supabase URL, Key, or Table not fully configured. "
+                            "Data fetching from Supabase will not be possible.")
+        else:
+            self._connect_supabase()  # 尝试在初始化时连接
+
+    def _connect_supabase(self):
+        """尝试连接到 Supabase 数据库。"""
+        if not self.supabase_url or not self.supabase_key:
+            logging.error("Supabase URL or Key is missing, cannot connect.")
+            return False
+        if self.supabase:
+            logging.debug("Already connected to Supabase.")
+            return True
+        try:
+            logging.info(f"Connecting to Supabase at {self.supabase_url}...")
+            self.supabase = create_client(self.supabase_url, self.supabase_key)
+            # 可以添加一个简单的测试查询来验证连接
+            self.supabase.table(self.supabase_table).select('id', count='exact').limit(0).execute()
+            logging.info("Successfully connected to Supabase.")
+            return True
+        except Exception as e:
+            logging.error(f"Error connecting to Supabase: {e}")
+            self.supabase = None  # 确保连接失败时客户端为 None
+            return False
+
     def prepare_training_data(self, cities: List[str], ssps: List[int], building_types: List[str]) -> pd.DataFrame:
         """
-        Prepare training data for the GNN model.
-        
+        从 Supabase 数据库准备（获取）用于 GNN 模型的训练数据。
+
         Args:
-            cities (List[str]): List of cities
-            ssps (List[int]): List of SSP scenarios
-            building_types (List[str]): List of building types
-            
+            cities (List[str]): 需要包含的城市列表。
+            ssps (List[int]): 需要包含的 SSP 场景列表 (应与 Supabase 表中的 ssp 列匹配)。
+                               假设 Supabase 中的列名为 'ssp_code' 或 'ssp'。
+            building_types (List[str]): 需要包含的建筑类型列表。
+
         Returns:
-            pd.DataFrame: Training data
+            pd.DataFrame: 从 Supabase 获取并组合的训练数据。如果出错或未找到数据，则返回空 DataFrame。
         """
-        all_data = []
-        
-        for city in cities:
-            for ssp in ssps:
-                df = self.collect_data_for_building_types(city, ssp, building_types)
-                all_data.append(df)
-                
-        combined_df = pd.concat(all_data, ignore_index=True)
-        
-        output_file = self.results_dir / "training_data.csv"
-        combined_df.to_csv(output_file, index=False)
-        logging.info(f"Saved training data to {output_file}")
-        
-        return combined_df
-        
-    def load_training_data(self) -> pd.DataFrame:
+        if not self.supabase:
+            logging.error(
+                "Supabase client is not connected. Cannot prepare training data.")
+            # 尝试重新连接
+            if not self._connect_supabase():
+                return pd.DataFrame()  # 如果连接失败，返回空 DataFrame
+
+        if not self.supabase_table:
+            logging.error("Supabase table name is not configured.")
+            return pd.DataFrame()
+
+        logging.info(
+            f"Preparing training data from Supabase table '{self.supabase_table}'...")
+        logging.info(
+            f"Filters: cities={cities}, ssps={ssps}, building_types={building_types}")
+
+        try:
+            all_data = []
+            page_size = 1000  # 每次获取的行数，通常设为默认值或 Supabase 的 max_rows
+            current_page = 0
+            fetched_count_last_page = page_size # 用于控制循环
+
+            logging.info(f"Starting paginated fetch from Supabase (page size: {page_size})...")
+
+            while fetched_count_last_page == page_size: # 只有当上一页获取满了才可能需要获取下一页
+                start_row = current_page * page_size
+                end_row = start_row + page_size - 1
+                logging.debug(f"Fetching page {current_page + 1} (rows {start_row}-{end_row})...")
+
+                # 重新构建基础查询或确保过滤器在分页前应用
+                query_builder = self.supabase.table(self.supabase_table).select("*")
+
+                # 应用你的过滤器
+                if cities:
+                    query_cities = [city.upper() for city in cities]
+                    query_builder = query_builder.in_('city', query_cities)
+                if ssps:
+                    query_ssps = [ssp for ssp in ssps]
+                    query_builder = query_builder.in_('ssp_code', query_ssps) # 确认列名是 ssp_code
+                if building_types:
+                    query_building_types = [btype.upper() for btype in building_types]
+                    query_builder = query_builder.in_('building_type', query_building_types)
+
+                # 应用分页
+                response = query_builder.range(start_row, end_row).execute()
+
+                if hasattr(response, 'data') and response.data:
+                    page_data = response.data
+                    fetched_count_last_page = len(page_data)
+                    all_data.extend(page_data)
+                    logging.debug(f"Fetched {fetched_count_last_page} records for this page.")
+                    # 如果获取到的记录数小于页面大小，说明这是最后一页了
+                    if fetched_count_last_page < page_size:
+                        break
+                    current_page += 1 # 准备获取下一页
+                elif hasattr(response, 'error') and response.error:
+                    logging.error(f"Error fetching data from Supabase on page {current_page + 1}: {response.error}")
+                    fetched_count_last_page = 0 # 出错时终止循环
+                else:
+                    # 没有数据或意外响应
+                    logging.warning(f"No data or unexpected response on page {current_page + 1}. Stopping fetch.")
+                    fetched_count_last_page = 0 # 终止循环
+
+
+            combined_df = pd.DataFrame(all_data)
+            logging.info(
+                f"Successfully fetched {len(combined_df)} records from Supabase.")
+
+            # 可选：保存获取的数据到本地 CSV 文件
+            output_file = self.results_dir / "training_data_from_database.csv"
+            combined_df.to_csv(output_file, index=False)
+            logging.info(f"Saved fetched training data to {output_file}")
+
+            return combined_df
+
+        except Exception as e:
+            logging.error(
+                f"An unexpected error occurred while querying Supabase: {e}")
+            # 可以考虑记录更详细的堆栈跟踪信息
+            # import traceback
+            # logging.error(traceback.format_exc())
+            return pd.DataFrame()  # 发生异常，返回空 DataFrame
+
+    def load_training_data(self, source: str = "supabase") -> pd.DataFrame:
         """
-        Load existing training data.
-        
+        从本地文件加载已准备好的训练数据。
+
+        Args:
+            source (str): 指定数据来源的文件名后缀，例如 "supabase" 或 "azure"。
+                          默认为 "supabase"，对应 `prepare_training_data` 保存的文件。
+
         Returns:
-            pd.DataFrame: Training data
+            pd.DataFrame: 加载的训练数据。
+
+        Raises:
+            FileNotFoundError: 如果对应的本地训练数据文件不存在。
         """
-        training_file = self.results_dir / "training_data.csv"
-        
+        # 根据来源选择文件名
+        if source.lower() == "supabase":
+            training_filename = "training_data_from_supabase.csv"
+        elif source.lower() == "azure":
+            training_filename = "training_data.csv"  # 假设旧的 Azure 数据保存为此名
+        else:
+            # 默认或未指定时，尝试加载 Supabase 的版本
+            training_filename = "training_data_from_supabase.csv"
+            logging.warning(
+                f"Unknown source '{source}', attempting to load '{training_filename}'.")
+
+        training_file = self.results_dir / training_filename
+
         if not training_file.exists():
-            raise FileNotFoundError(f"Training data not found at {training_file}")
-            
+            raise FileNotFoundError(f"Training data file '{training_file}' not found. "
+                                    f"Run prepare_training_data (for Supabase) or ensure '{source}' data exists.")
+
+        logging.info(f"Loading training data from {training_file}")
         return pd.read_csv(training_file)

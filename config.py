@@ -1,7 +1,8 @@
 import os
 import pathlib
-import shutil
+import dotenv
 
+dotenv.load_dotenv()
 data_dir = pathlib.Path(__file__).parent / "data"
 eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0") # energyplus installation directory
 results_dir = data_dir / "Results"
@@ -76,7 +77,7 @@ CONFIG = {
     # sensitivity analysis settings
     "analysis":{
         "output_intermediary_files": True, # Output intermediary files
-        "sensitivity_samples_n": 32, # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
         "n_estimators": 100, # Number of trees for Random Forest
         "random_state": 10, # Random state for Random Forest
         "optimization_model": 'rf', # Optimization model example: ['ols', 'rf', etc]
@@ -108,15 +109,6 @@ CONFIG = {
         "pvwatts_ground_coverage_ratio": 0.4, # Ground Coverage (Tracking Systems Only)
     },
     
-    'azure_docker': {
-        'enabled': True, # Enable Azure Docker container simulation
-        'api_endpoint': 'https://api.example.com/energyplus', # Azure Docker container API endpoint
-        'api_key': '', # Azure Docker container API key
-        'timeout': 300, # Timeout for API requests in seconds
-        'retry_count': 3, # Number of retries for failed API requests
-        'retry_delay': 5, # Delay between retries in seconds
-    },
-    
     # EUI prediction settings
     'eui_prediction': {
         'enabled': True, # Enable EUI prediction
@@ -129,6 +121,13 @@ CONFIG = {
         'test_split': 0.1, # Test split ratio
         'early_stopping_patience': 10, # Early stopping patience
         'save_best_model': True, # Save best model during training
+    },
+
+    # Supabase settings
+    'supabase': {
+        'url': os.getenv('SUPABASE_URL'), # Supabase URL
+        'key': os.getenv('SUPABASE_KEY'), # Supabase key
+        'table': os.getenv('SUPABASE_TABLE'), # Supabase table name
     }
 }
 

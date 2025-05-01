@@ -1,12 +1,14 @@
 import logging
 import sys
 import argparse
+import asyncio
 from tqdm import tqdm
 from backend.services.optimization_service import OptimizationPipeline
 from backend.services.azure_service import AzureDockerService
 from backend.services.eui_data_pipeline import EUIDataPipeline
 from backend.services.eui_prediction_service import EUIPredictionService
 from config import CONFIG
+from backend.services.supabase_services import SensitivityDataUploader
 
 logging.basicConfig(level=logging.WARNING,
                     filename=CONFIG['paths']['log_dir'] / "optimization.log",
@@ -55,27 +57,6 @@ def run_optimization(target_cities, target_ssps, target_btypes):
                     logging.error(f"Error occurred for {city}/{ssp}/{btype} - {e}")
 
     logging.info("Optimization process completed successfully.")
-
-def run_azure_simulation(target_cities, target_ssps, target_btypes):
-    """Run simulations using Azure Docker container."""
-    if not CONFIG['azure_docker']['enabled']:
-        logging.error("Azure Docker container simulation is disabled in config.")
-        return
-        
-    logging.info("Starting Azure Docker container simulation...")
-    
-    azure_service = AzureDockerService(CONFIG)
-    
-    for city in tqdm(target_cities, desc="Cities"):
-        for ssp in tqdm(target_ssps, desc="SSPs"):
-            for btype in tqdm(target_btypes, desc="Building Types"):
-                try:
-                    result = azure_service.simulate_building_type(city, ssp, btype)
-                    logging.info(f"Simulation completed for {city}/{ssp}/{btype} - EUI: {result['eui']}")
-                except Exception as e:
-                    logging.error(f"Error occurred during Azure simulation for {city}/{ssp}/{btype} - {e}")
-                    
-    logging.info("Azure Docker container simulation completed successfully.")
 
 def collect_eui_data(target_cities, target_ssps, target_btypes):
     """Collect EUI data for training the prediction model."""
@@ -149,14 +130,14 @@ def predict_eui(city, ssp, btype):
 
 def main():
     parser = argparse.ArgumentParser(description='EP-WebUI: Energy Performance Web User Interface')
-    parser.add_argument('--mode', type=str, default='optimize',
-                        choices=['optimize', 'azure', 'collect', 'train', 'predict'],
+    parser.add_argument('--mode', type=str, default='collect',
+                        choices=['optimize', 'collect', 'train', 'predict'],
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
                         help='Target cities')
     parser.add_argument('--ssps', type=str, nargs='+', default=['126', '245', '370', '434', '585'],
                         help='Target SSP scenarios')
-    parser.add_argument('--btypes', type=str, nargs='+', default=['OfficeMedium'],
+    parser.add_argument('--btypes', type=str, nargs='+', default=['OfficeMedium', 'OfficeLarge','ApartmentHighRise','SingleFamilyResidential','MultiFamilyResidential'],
                         help='Target building types')
     parser.add_argument('--city', type=str, help='City for prediction')
     parser.add_argument('--ssp', type=str, help='SSP scenario for prediction')
@@ -173,8 +154,6 @@ def main():
     
     if args.mode == 'optimize':
         run_optimization(args.cities, target_ssps, args.btypes)
-    elif args.mode == 'azure':
-        run_azure_simulation(args.cities, target_ssps, args.btypes)
     elif args.mode == 'collect':
         collect_eui_data(args.cities, target_ssps, args.btypes)
     elif args.mode == 'train':
