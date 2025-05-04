@@ -1,64 +1,78 @@
 import os
 import pathlib
 import dotenv
+import torch
 
 dotenv.load_dotenv()
 data_dir = pathlib.Path(__file__).parent / "data"
-eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0") # energyplus installation directory
+# energyplus installation directory
+eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0")
 results_dir = data_dir / "Results"
+
 
 def create_directories():
     for key, value in CONFIG['paths'].items():
         pathlib.Path(value).mkdir(parents=True, exist_ok=True)
 
+
 CONFIG = {
     # Paths configuration
-    "paths":{
+    "paths": {
         "data_dir": data_dir,
-        "results_dir": results_dir, # Results Output Directory
-        "prototypes_dir": data_dir / "Prototypes", # Prototype Building IDF Files Directory
-        "tmy_dir": data_dir / "TMYs", # Typical Meteorological Year Files Directory
-        "ftmy_dir": data_dir / "FTMYs", # Future Typical Meteorological Year Files Directory
-        "epsim_dir": results_dir / "EPSim", # EnergyPlus Benchmark Output Directory
-        "sensitivity_dir": results_dir / "Sensitivity", # Sensitivity Analysis and Optimization Results Output Directory
-        "future_load_dir": results_dir / "FutureLoad", # Future Loads Simulation Output Directory
-        "ensemble_dir": results_dir / "Ensemble", # Ensemble Simulation Output Directory
-        "eplus_executable": eplus_dir / "energyplus.exe", # EnergyPlus executable file path
-        "log_dir": results_dir / "Logs", # Log files output directory
-        "eui_data_dir": results_dir / "EUI_Data", # EUI prediction data directory
-        "eui_models_dir": results_dir / "EUI_Models", # EUI prediction models directory
-        },
+        "results_dir": results_dir,  # Results Output Directory
+        # Prototype Building IDF Files Directory
+        "prototypes_dir": data_dir / "Prototypes",
+        "tmy_dir": data_dir / "TMYs",  # Typical Meteorological Year Files Directory
+        # Future Typical Meteorological Year Files Directory
+        "ftmy_dir": data_dir / "FTMYs",
+        "epsim_dir": results_dir / "EPSim",  # EnergyPlus Benchmark Output Directory
+        # Sensitivity Analysis and Optimization Results Output Directory
+        "sensitivity_dir": results_dir / "Sensitivity",
+        # Future Loads Simulation Output Directory
+        "future_load_dir": results_dir / "FutureLoad",
+        # Ensemble Simulation Output Directory
+        "ensemble_dir": results_dir / "Ensemble",
+        # EnergyPlus executable file path
+        "eplus_executable": eplus_dir / "energyplus.exe",
+        "log_dir": results_dir / "Logs",  # Log files output directory
+        "eui_data_dir": results_dir / "EUI_Data",  # EUI prediction data directory
+        "eui_models_dir": results_dir / "EUI_Models",  # EUI prediction models directory
+    },
     # Constants configuration
-    "constants":{
-        'ng_conversion_factor': 3.2, # conversion factor for natural gas to energy
-        'cpu_count_override': os.cpu_count() - 1, # number of cores to use for simulation
-        'debug': False, # debug mode
+    "constants": {
+        'ng_conversion_factor': 3.2,  # conversion factor for natural gas to energy
+        # number of cores to use for simulation
+        'cpu_count_override': os.cpu_count() - 1,
+        'debug': False,  # debug mode
     },
 
     # Different Building Types Ratio of the city
-    "building_ratios":{
-        "office_large": 0.000663, # Large office building
-        "office_medium": 0.001725, # Medium office building
-        "apartment_high_rise": 0.000384, # High-rise apartment building
-        "sf": 0.608149, # Single-family residential
-        "mf": 0.389079 # Multi-family residential
+    "building_ratios": {
+        "office_large": 0.000663,  # Large office building
+        "office_medium": 0.001725,  # Medium office building
+        "apartment_high_rise": 0.000384,  # High-rise apartment building
+        "sf": 0.608149,  # Single-family residential
+        "mf": 0.389079  # Multi-family residential
     },
 
     # Energy conservation measures parameter ranges
-    "ecm_ranges":{
-        "shgc": [0.2, 0.4, 0.6, 0.8], # Solar Heat Gain Coefficient
-        "win_u": [0.5, 1, 1.5, 2, 2.5, 3], # Window U-value (W/m2K)
-        "nv_area": [0.4, 0.8, 1.2, 1.6, 2, 2.4], # Natural Ventilation Area (m2)
-        "insu": [1, 2, 3, 4], # Wall Insulation R-value (m2K/W)
-        "infl": [0.25, 0.5, 0.75, 1, 1.25, 1.5], # Air Infiltration Rate (ACH)
-        "cool_cop": [3.5, 4, 4.5, 5, 5.5, 6], # Cooling Coefficient of Performance
-        "cool_air_temp": [10, 12, 14, 16], # Cooling Air Supply Temperature (C)
-        "lighting": [1, 2, 3], # Lighting Power Density (W/m2)
-        "vt": [0.4, 0.6, 0.7] # Visible Light Transmittance
+    "ecm_ranges": {
+        "shgc": [0.2, 0.4, 0.6, 0.8],  # Solar Heat Gain Coefficient
+        "win_u": [0.5, 1, 1.5, 2, 2.5, 3],  # Window U-value (W/m2K)
+        # Natural Ventilation Area (m2)
+        "nv_area": [0.4, 0.8, 1.2, 1.6, 2, 2.4],
+        "insu": [1, 2, 3, 4],  # Wall Insulation R-value (m2K/W)
+        "infl": [0.25, 0.5, 0.75, 1, 1.25, 1.5],  # Air Infiltration Rate (ACH)
+        # Cooling Coefficient of Performance
+        "cool_cop": [3.5, 4, 4.5, 5, 5.5, 6],
+        # Cooling Air Supply Temperature (C)
+        "cool_air_temp": [10, 12, 14, 16],
+        "lighting": [1, 2, 3],  # Lighting Power Density (W/m2)
+        "vt": [0.4, 0.6, 0.7]  # Visible Light Transmittance
     },
 
     # Lighting reduction rate
-    "lighting_reduction_map":{
+    "lighting_reduction_map": {
         "officelarge": {1: 0.2, 2: 0.47, 3: 0.53},
         "officemedium": {1: 0.2, 2: 0.47, 3: 0.53},
         "apartmenthighrise": {1: 0.35, 2: 0.45, 3: 0.55},
@@ -67,67 +81,76 @@ CONFIG = {
     },
 
     # Simulation settings
-    "simulation":{
+    "simulation": {
         "start_year": 2040,
         "end_year": 2040,
-        "default_output_suffix": "C", # suffix for the output file
-        "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit'], # Files to be cleaned up (except .sql)
+        "default_output_suffix": "C",  # suffix for the output file
+        # Files to be cleaned up (except .sql)
+        "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit'],
     },
 
     # sensitivity analysis settings
-    "analysis":{
-        "output_intermediary_files": True, # Output intermediary files
-        "sensitivity_samples_n": 2, # Number of samples for Saltelli's sampling
-        "n_estimators": 100, # Number of trees for Random Forest
-        "random_state": 10, # Random state for Random Forest
-        "optimization_model": 'rf', # Optimization model example: ['ols', 'rf', etc]
-        "ga_population_size": 100, # Population size for genetic algorithm
-        "ga_generations": 100, # Number of generations for genetic algorithm
+    "analysis": {
+        "output_intermediary_files": True,  # Output intermediary files
+        "sensitivity_samples_n": 2,  # Number of samples for Saltelli's sampling
+        "n_estimators": 100,  # Number of trees for Random Forest
+        "random_state": 10,  # Random state for Random Forest
+        # Optimization model example: ['ols', 'rf', etc]
+        "optimization_model": 'rf',
+        "ga_population_size": 100,  # Population size for genetic algorithm
+        "ga_generations": 100,  # Number of generations for genetic algorithm
     },
 
     # PV system settings
     'pv_analysis': {
-        'enabled': True, # Enable PV analysis process
-        'pv_efficiency': 0.18, # PV module efficiency
-        'pv_coverage': 0.8, # PV module coverage on surfaces (consider gaps)
-        'pv_inverter_efficiency': 0.96, # PV inverter efficiency
-        'shadow_calculation_surface_types': ['ROOF', 'WALL'], # Surface types to calculate shadows/radiation (uppercase)
-        'radiation_threshold_high': 1000.0, # High radiation threshold (kWh/m2)
+        'enabled': True,  # Enable PV analysis process
+        'pv_efficiency': 0.18,  # PV module efficiency
+        'pv_coverage': 0.8,  # PV module coverage on surfaces (consider gaps)
+        'pv_inverter_efficiency': 0.96,  # PV inverter efficiency
+        # Surface types to calculate shadows/radiation (uppercase)
+        'shadow_calculation_surface_types': ['ROOF', 'WALL'],
+        # High radiation threshold (kWh/m2)
+        'radiation_threshold_high': 1000.0,
         'radiation_threshold_low': 600.0,   # Low radiation threshold (kWh/m2)
-        'radiation_score_threshold': 70, # Minimum radiation score (0-100)
-        'max_score': 100.0, # Maximum radiation score
+        'radiation_score_threshold': 70,  # Minimum radiation score (0-100)
+        'max_score': 100.0,  # Maximum radiation score
         'min_score': 0.0,   # Minimum radiation score
-        'pv_output_prefix': 'pv', # PV simulation output prefix
-        'shadow_output_prefix': 'shadow', # Shadow analysis simulation output prefix
+        'pv_output_prefix': 'pv',  # PV simulation output prefix
+        'shadow_output_prefix': 'shadow',  # Shadow analysis simulation output prefix
 
-        "use_pvwatts": True, # Use PVWatts to calculate PV system performance
-        "pvwatts_module_type": "Standard", # PVWatts module type: Standard, Premium, ThinFilm
-        "pvwatts_array_type": "FixedOpenRack", # FixedOpenRack, FixedRoofMounted, OneAxis, OneAxisBacktracking, TwoAxis
-        "pvwatts_system_losses": 0.14, # System losses (excluding inverter efficiency, and encompassing factors like wiring and soiling) (0 to 1)
-        "pvwatts_dc_ac_ratio": 1.1, # DC-to-AC Ratio (Impacting Peak Shaving)
-        "pvwatts_inverter_efficiency": 0.96, # Inverter rated efficiency (0 to 1)
-        "pvwatts_ground_coverage_ratio": 0.4, # Ground Coverage (Tracking Systems Only)
+        "use_pvwatts": True,  # Use PVWatts to calculate PV system performance
+        # PVWatts module type: Standard, Premium, ThinFilm
+        "pvwatts_module_type": "Standard",
+        # FixedOpenRack, FixedRoofMounted, OneAxis, OneAxisBacktracking, TwoAxis
+        "pvwatts_array_type": "FixedOpenRack",
+        # System losses (excluding inverter efficiency, and encompassing factors like wiring and soiling) (0 to 1)
+        "pvwatts_system_losses": 0.14,
+        "pvwatts_dc_ac_ratio": 1.1,  # DC-to-AC Ratio (Impacting Peak Shaving)
+        # Inverter rated efficiency (0 to 1)
+        "pvwatts_inverter_efficiency": 0.96,
+        # Ground Coverage (Tracking Systems Only)
+        "pvwatts_ground_coverage_ratio": 0.4,
     },
-    
+
     # EUI prediction settings
     'eui_prediction': {
-        'enabled': True, # Enable EUI prediction
-        'model_type': 'gnn', # Model type: 'gnn' or 'mlp'
-        'hidden_channels': 64, # Number of hidden channels in GNN
-        'learning_rate': 0.001, # Learning rate for model training
-        'epochs': 100, # Number of epochs for model training
-        'batch_size': 32, # Batch size for model training
-        'validation_split': 0.2, # Validation split ratio
-        'test_split': 0.1, # Test split ratio
-        'early_stopping_patience': 10, # Early stopping patience
-        'save_best_model': True, # Save best model during training
+        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+        'feature_columns': ["city", "btype", "ssp_code", "shgc", "win_u", "nv_area", "insu", "infl", "cool_cop", "cool_air_temp", "lighting", "vt"],
+        'target_column': 'eui',
+        'group_by_columns': ["city", "btype", "ssp_code"],
+        'train_val_test_split': [0.8, 0.1, 0.1], # train, val, test split ratio
+        'random_state': 42,
+        'batch_size': 64,
+        'learning_rate': 0.001,
+        'num_epochs': 100,
+        'scale_features': True,
     },
 
     # Supabase settings
     'supabase': {
-        'url': os.getenv('SUPABASE_URL'), # Supabase URL
-        'key': os.getenv('SUPABASE_KEY'), # Supabase key
-        'table': os.getenv('SUPABASE_TABLE'), # Supabase table name
+        'url': os.getenv('SUPABASE_URL'),  # Supabase URL
+        'key': os.getenv('SUPABASE_KEY'),  # Supabase key
+        'table': os.getenv('SUPABASE_TABLE'),  # Supabase table name
     }
 }
 

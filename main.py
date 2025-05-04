@@ -1,16 +1,14 @@
 import logging
 import sys
 import argparse
-import asyncio
 from tqdm import tqdm
 from backend.services.optimization_service import OptimizationPipeline
-from backend.services.azure_service import AzureDockerService
 from backend.services.eui_data_pipeline import EUIDataPipeline
 from backend.services.eui_prediction_service import EUIPredictionService
+from backend.services.model_service import ModelService
 from config import CONFIG
-from backend.services.supabase_services import SensitivityDataUploader
 
-logging.basicConfig(level=logging.WARNING,
+logging.basicConfig(level=logging.INFO,
                     filename=CONFIG['paths']['log_dir'] / "optimization.log",
                     filemode="a",
                     format="%(asctime)s - %(levelname)s - %(message)s"
@@ -60,10 +58,6 @@ def run_optimization(target_cities, target_ssps, target_btypes):
 
 def collect_eui_data(target_cities, target_ssps, target_btypes):
     """Collect EUI data for training the prediction model."""
-    if not CONFIG['eui_prediction']['enabled']:
-        logging.error("EUI prediction is disabled in config.")
-        return
-        
     logging.info("Starting EUI data collection...")
     
     data_pipeline = EUIDataPipeline(CONFIG)
@@ -78,22 +72,18 @@ def collect_eui_data(target_cities, target_ssps, target_btypes):
 
 def train_eui_model():
     """Train the EUI prediction model."""
-    if not CONFIG['eui_prediction']['enabled']:
-        logging.error("EUI prediction is disabled in config.")
-        return
-        
     logging.info("Starting EUI model training...")
     
+    model_service = ModelService(CONFIG)
     prediction_service = EUIPredictionService(CONFIG)
     data_pipeline = EUIDataPipeline(CONFIG)
     
     try:
-        training_data = data_pipeline.load_training_data()
+        data = data_pipeline.load_data()
         prediction_service.train_model(
-            training_data,
-            epochs=CONFIG['eui_prediction']['epochs'],
-            batch_size=CONFIG['eui_prediction']['batch_size']
-        )
+            data,
+            model_service
+            )
         logging.info("Model training completed successfully.")
     except Exception as e:
         logging.error(f"Error occurred during EUI model training - {e}")
@@ -102,17 +92,14 @@ def train_eui_model():
 
 def predict_eui(city, ssp, btype):
     """Predict EUI for a specific building type."""
-    if not CONFIG['eui_prediction']['enabled']:
-        logging.error("EUI prediction is disabled in config.")
-        return
-        
+       
     logging.info(f"Predicting EUI for {city}/{ssp}/{btype}...")
     
     prediction_service = EUIPredictionService(CONFIG)
     
     try:
         building_data = {
-            'building_type': btype,
+            'btype': btype,
             'zones': [],
             'surfaces': [],
             'equipment': [],
@@ -130,7 +117,7 @@ def predict_eui(city, ssp, btype):
 
 def main():
     parser = argparse.ArgumentParser(description='EP-WebUI: Energy Performance Web User Interface')
-    parser.add_argument('--mode', type=str, default='collect',
+    parser.add_argument('--mode', type=str, default='train',
                         choices=['optimize', 'collect', 'train', 'predict'],
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],

@@ -101,7 +101,7 @@ class SensitivityDataUploader:
                 city, btype, ssp = path.parent.name.split("_")
                 paths_dict[str(path)] = {
                     "city": city,
-                    "building_type": btype,
+                    "btype": btype,
                     "ssp_code": ssp,
                     "file_path": path  # Store the Path object for reading
                 }

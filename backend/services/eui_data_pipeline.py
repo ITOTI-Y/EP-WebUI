@@ -5,7 +5,6 @@ import logging
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any, Optional
-from .azure_service import AzureDockerService
 from supabase import create_client, Client
 
 
@@ -66,15 +65,15 @@ class EUIDataPipeline:
             self.supabase = None  # 确保连接失败时客户端为 None
             return False
 
-    def prepare_training_data(self, cities: List[str], ssps: List[int], building_types: List[str]) -> pd.DataFrame:
+    def prepare_training_data(self, cities: List[str], ssps: List[int], btypes: List[str]) -> pd.DataFrame:
         """
-        从 Supabase 数据库准备（获取）用于 GNN 模型的训练数据。
+        从 Supabase 数据库准备（获取）用于神经网络模型的训练数据。
 
         Args:
             cities (List[str]): 需要包含的城市列表。
             ssps (List[int]): 需要包含的 SSP 场景列表 (应与 Supabase 表中的 ssp 列匹配)。
                                假设 Supabase 中的列名为 'ssp_code' 或 'ssp'。
-            building_types (List[str]): 需要包含的建筑类型列表。
+            btypes (List[str]): 需要包含的建筑类型列表。
 
         Returns:
             pd.DataFrame: 从 Supabase 获取并组合的训练数据。如果出错或未找到数据，则返回空 DataFrame。
@@ -93,7 +92,7 @@ class EUIDataPipeline:
         logging.info(
             f"Preparing training data from Supabase table '{self.supabase_table}'...")
         logging.info(
-            f"Filters: cities={cities}, ssps={ssps}, building_types={building_types}")
+            f"Filters: cities={cities}, ssps={ssps}, btypes={btypes}")
 
         try:
             all_data = []
@@ -118,9 +117,9 @@ class EUIDataPipeline:
                 if ssps:
                     query_ssps = [ssp for ssp in ssps]
                     query_builder = query_builder.in_('ssp_code', query_ssps) # 确认列名是 ssp_code
-                if building_types:
-                    query_building_types = [btype.upper() for btype in building_types]
-                    query_builder = query_builder.in_('building_type', query_building_types)
+                if btypes:
+                    query_btypes = [btype.upper() for btype in btypes]
+                    query_builder = query_builder.in_('btype', query_btypes)
 
                 # 应用分页
                 response = query_builder.range(start_row, end_row).execute()
@@ -143,11 +142,10 @@ class EUIDataPipeline:
                     fetched_count_last_page = 0 # 终止循环
 
 
-            combined_df = pd.DataFrame(all_data)
+            combined_df = pd.DataFrame(all_data).drop(columns=['created_at'])
             logging.info(
                 f"Successfully fetched {len(combined_df)} records from Supabase.")
 
-            # 可选：保存获取的数据到本地 CSV 文件
             output_file = self.results_dir / "training_data_from_database.csv"
             combined_df.to_csv(output_file, index=False)
             logging.info(f"Saved fetched training data to {output_file}")
@@ -162,7 +160,7 @@ class EUIDataPipeline:
             # logging.error(traceback.format_exc())
             return pd.DataFrame()  # 发生异常，返回空 DataFrame
 
-    def load_training_data(self, source: str = "supabase") -> pd.DataFrame:
+    def load_data(self) -> pd.DataFrame:
         """
         从本地文件加载已准备好的训练数据。
 
@@ -176,22 +174,13 @@ class EUIDataPipeline:
         Raises:
             FileNotFoundError: 如果对应的本地训练数据文件不存在。
         """
-        # 根据来源选择文件名
-        if source.lower() == "supabase":
-            training_filename = "training_data_from_supabase.csv"
-        elif source.lower() == "azure":
-            training_filename = "training_data.csv"  # 假设旧的 Azure 数据保存为此名
-        else:
-            # 默认或未指定时，尝试加载 Supabase 的版本
-            training_filename = "training_data_from_supabase.csv"
-            logging.warning(
-                f"Unknown source '{source}', attempting to load '{training_filename}'.")
+        data_filename = "training_data_from_database.csv"
 
-        training_file = self.results_dir / training_filename
+        data_file = self.results_dir / data_filename
 
-        if not training_file.exists():
-            raise FileNotFoundError(f"Training data file '{training_file}' not found. "
-                                    f"Run prepare_training_data (for Supabase) or ensure '{source}' data exists.")
+        if not data_file.exists():
+            raise FileNotFoundError(f"Data file '{data_file}' not found. "
+                                    f"Run prepare_training_data (for Supabase) or ensure '{data_filename}' data exists.")
 
-        logging.info(f"Loading training data from {training_file}")
-        return pd.read_csv(training_file)
+        logging.info(f"Loading Data from {data_file}")
+        return pd.read_csv(data_file)
