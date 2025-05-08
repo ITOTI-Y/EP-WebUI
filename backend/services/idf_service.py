@@ -1,15 +1,9 @@
 # backend/services/idf_service.py
 """Service module for handling EnergyPlus IDF file uploads, storage, and retrieval."""
 
-import os
-import uuid
-import numpy as np
 import logging
 from pathlib import Path
-from dotenv import load_dotenv
-from fastapi import UploadFile, HTTPException
 from eppy.modeleditor import IDF
-from io import BytesIO
 
 # Define the path to the EnergyPlus Data Dictionary file.
 IDD_FILE = Path(__file__).parent.parent.parent / "data" / "Energy+.idd"
@@ -522,13 +516,13 @@ class IDFModel:
             logging.info(
                 f"Applied cooling supply temperature to {modified_count} Sizing:Zone objects.")
 
-    def apply_lighting_reduction(self, reduction_factor: float, building_type: str):
+    def apply_lighting_reduction(self, reduction_factor: float, btype: str):
         """
         Modify the lighting reduction factor for all Lights objects in the IDF object.
 
         Args:
             reduction_factor (float): Lighting reduction factor
-            building_type (str): Building type (dosen't matter for now)
+            btype (str): Building type (dosen't matter for now)
         """
         if reduction_factor <= 0 or reduction_factor >= 1:
             return  # Return if reduction factor is not between 0 and 1
