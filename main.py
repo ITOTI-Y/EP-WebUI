@@ -9,7 +9,6 @@ from backend.services.model_service import ModelService
 from config import CONFIG
 
 logging.basicConfig(level=logging.INFO,
-logging.basicConfig(level=logging.INFO,
                     filename=CONFIG['paths']['log_dir'] / "optimization.log",
                     filemode="a",
                     format="%(asctime)s - %(levelname)s - %(message)s"

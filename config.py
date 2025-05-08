@@ -86,13 +86,11 @@ CONFIG = {
     # sensitivity analysis settings
     "analysis": {
         "output_intermediary_files": True,  # Output intermediary files
-        "sensitivity_samples_n": 2,  # Number of samples for Saltelli's sampling
-        "n_estimators": 100,  # Number of trees for Random Forest
-        "random_state": 10,  # Random state for Random Forest
+        "sensitivity_samples_n": 32,  # Number of samples for Saltelli's sampling
+        "n_estimators": 200,  # Number of trees for Random Forest
+        "random_state": 20,  # Random state for Random Forest
         # Optimization model example: ['ols', 'rf', etc]
-        "optimization_model": 'rf',
-        "ga_population_size": 100,  # Population size for genetic algorithm
-        "ga_generations": 100,  # Number of generations for genetic algorithm
+        "optimization_model": 'ols',
     },
 
     # PV system settings
