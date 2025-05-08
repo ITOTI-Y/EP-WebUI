@@ -18,15 +18,23 @@ class ModelService:
 class RegressionNet(torch.nn.Module):
     def __init__(self, input_dim: int):
         super(RegressionNet, self).__init__()
-        self.layer_1 = nn.Linear(input_dim, 128)
+
+        self.layer_1 = nn.Linear(input_dim, 256)
+        self.bn_1 = nn.BatchNorm1d(256)
         self.relu_1 = nn.ReLU()
         self.dropout_1 = nn.Dropout(0.2)
-        self.layer_2 = nn.Linear(128, 64)
+
+        self.layer_2 = nn.Linear(256, 128)
+        self.bn_2 = nn.BatchNorm1d(128)
         self.relu_2 = nn.ReLU()
         self.dropout_2 = nn.Dropout(0.2)
-        self.layer_3 = nn.Linear(64, 32)
+
+        self.layer_3 = nn.Linear(128, 64)
+        self.bn_3 = nn.BatchNorm1d(64)
         self.relu_3 = nn.ReLU()
-        self.output_layer = nn.Linear(32, 1)
+
+
+        self.output_layer = nn.Linear(64, 1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.layer_1(x)

@@ -141,8 +141,8 @@ CONFIG = {
         'train_val_test_split': [0.8, 0.1, 0.1], # train, val, test split ratio
         'random_state': 42,
         'batch_size': 64,
-        'learning_rate': 0.001,
-        'num_epochs': 100,
+        'learning_rate': 0.0001,
+        'num_epochs': 500,
         'scale_features': True,
     },
 
