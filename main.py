@@ -1,3 +1,5 @@
+# TODO:使用带倾角的PV太阳能板
+
 import logging
 import sys
 import argparse
@@ -117,12 +119,12 @@ def predict_eui(city, ssp, btype):
 
 def main():
     parser = argparse.ArgumentParser(description='EP-WebUI: Energy Performance Web User Interface')
-    parser.add_argument('--mode', type=str, default='optimize',
+    parser.add_argument('--mode', type=str, default='collect',
                         choices=['optimize', 'collect', 'train', 'predict'],
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
                         help='Target cities')
-    parser.add_argument('--ssps', type=str, nargs='+', default=['TMY'], # 'TMY', '126', '245', '370', '434', '585' (CHOICE)
+    parser.add_argument('--ssps', type=str, nargs='+', default=['TMY', '126', '245', '370', '434', '585'], # 'TMY', '126', '245', '370', '434', '585' (CHOICE)
                         help='Target SSP scenarios')
     parser.add_argument('--btypes', type=str, nargs='+', default=['OfficeMedium', 'OfficeLarge','ApartmentHighRise','SingleFamilyResidential','MultiFamilyResidential'],
                         help='Target building types')

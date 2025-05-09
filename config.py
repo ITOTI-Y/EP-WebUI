@@ -96,7 +96,7 @@ CONFIG = {
         "n_estimators": 100,  # Number of trees for Random Forest
         "random_state": 10,  # Random state for Random Forest
         # Optimization model example: ['ols', 'rf', etc]
-        "optimization_model": 'rf',
+        "optimization_model": 'ols',
         "ga_population_size": 100,  # Population size for genetic algorithm
         "ga_generations": 100,  # Number of generations for genetic algorithm
     },

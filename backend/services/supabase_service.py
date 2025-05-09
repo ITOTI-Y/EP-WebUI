@@ -144,7 +144,7 @@ class SensitivityDataUploader:
                     df[key] = value.upper()
 
             # Convert specific columns to nullable integer type
-            int_columns = ['ssp_code', 'insu', 'cool_air_temp', 'lighting']
+            int_columns = ['insu', 'cool_air_temp', 'lighting']
             for col in int_columns:
                 if col in df.columns:
                     df[col] = pd.to_numeric(
