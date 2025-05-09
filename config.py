@@ -96,32 +96,73 @@ CONFIG = {
     # PV system settings
     'pv_analysis': {
         'enabled': True,  # Enable PV analysis process
-        'pv_efficiency': 0.18,  # PV module efficiency
-        'pv_coverage': 0.8,  # PV module coverage on surfaces (consider gaps)
-        'pv_inverter_efficiency': 0.96,  # PV inverter efficiency
-        # Surface types to calculate shadows/radiation (uppercase)
-        'shadow_calculation_surface_types': ['ROOF', 'WALL'],
-        # High radiation threshold (kWh/m2)
-        'radiation_threshold_high': 1000.0,
-        'radiation_threshold_low': 600.0,   # Low radiation threshold (kWh/m2)
-        'radiation_score_threshold': 70,  # Minimum radiation score (0-100)
-        'max_score': 100.0,  # Maximum radiation score
-        'min_score': 0.0,   # Minimum radiation score
-        'pv_output_prefix': 'pv',  # PV simulation output prefix
-        'shadow_output_prefix': 'shadow',  # Shadow analysis simulation output prefix
+        'pv_model_type': 'Sandia',  # Choose PV model type: 'Simple', 'Sandia', 'PVWatts'
 
-        "use_pvwatts": True,  # Use PVWatts to calculate PV system performance
-        # PVWatts module type: Standard, Premium, ThinFilm
-        "pvwatts_module_type": "Standard",
-        # FixedOpenRack, FixedRoofMounted, OneAxis, OneAxisBacktracking, TwoAxis
-        "pvwatts_array_type": "FixedOpenRack",
-        # System losses (excluding inverter efficiency, and encompassing factors like wiring and soiling) (0 to 1)
-        "pvwatts_system_losses": 0.14,
-        "pvwatts_dc_ac_ratio": 1.1,  # DC-to-AC Ratio (Impacting Peak Shaving)
-        # Inverter rated efficiency (0 to 1)
-        "pvwatts_inverter_efficiency": 0.96,
-        # Ground Coverage (Tracking Systems Only)
-        "pvwatts_ground_coverage_ratio": 0.4,
+        # --- Simple PV Model (If pv_model_type == 'Simple') ---
+        'simple_pv_efficiency': 0.18,       # PV Module Efficiency
+        'simple_pv_coverage': 0.8,          # PV Module Coverage on the surface (considering gaps)
+
+        # --- Sandia PV Model (If pv_model_type == 'Sandia') ---
+        # 注意: 以下 Sandia 参数是示例值，你需要为你选择的组件填充真实数据
+        # 这些参数通常来自 NREL SAM 组件库或制造商数据表
+        'sandia_module_params': {
+            'active_area': 1.65,             # 单个组件有效面积 (m2) - 示例值
+            'num_cells_series': 60,          # 单个组件串联电池片数量 - 示例值 (例如 60片或72片电池的组件)
+            'num_cells_parallel': 1,         # 单个组件并联电池片数量 (通常为1)
+            'short_circuit_current': 9.5,    # 短路电流 (Amps) - 示例值
+            'open_circuit_voltage': 38.5,   # 开路电压 (Volts) - 示例值
+            'current_at_mpp': 9.0,           # 最大功率点电流 (Amps) - 示例值
+            'voltage_at_mpp': 32.0,          # 最大功率点电压 (Volts) - 示例值
+            'aIsc': 0.0004,                   # 短路电流的温度系数 (1/degC) - 示例值 (通常很小)
+            'aImp': 0.000216,                 # 最大功率点电流的温度系数 (1/degC) - 示例值
+            'c0': 0.99,                      #  - 示例值
+            'c1': 0.01,                      #  - 示例值
+            'BVoc0': -0.13,                  # 开路电压的温度系数 (Volts/degC) - 示例值 (通常为负)
+            'mBVoc': 0.0,                    #  - 示例值
+            'BVmp0': -0.14,                  # 最大功率点电压的温度系数 (Volts/degC) - 示例值
+            'mBVmp': 0.0,                    #  - 示例值
+            'diode_factor': 1.1,             # 二极管因子 - 示例值
+            'c2':  0.37957,                       #  - 示例值
+            'c3': -6.5492,                      #  - 示例值
+            'a0': 0.928, 'a1': 0.073144, 'a2': -0.019427, 'a3': 0.0017513, 'a4': -0.000051288, # IAM 参数 - 示例值
+            'b0': 1.0, 'b1': -0.002438, 'b2': 2.1e-05, 'b3': -1.7e-07, 'b4': 5.4e-10, 'b5': -1.5e-12, # IAM 参数 - 示例值
+            'delta_tc': 3.0,                 # NOCT 相关温度差 (deg C) - 示例值
+            'fd': 1.0,                       # 漫反射IAM因子 - 示例值
+            'a': -3.56, 'b': -0.075,          # 温度模型系数 - 示例值 (CEC/Sandia 温度模型)
+            'c4': 0.99, 'c5': 0.01,          #  - 示例值
+            'Ix0': 9.4, 'Ixx0': 5.5,         #  - 示例值
+            'c6': 0.1, 'c7': 0.9,            #  - 示例值
+            # --- 以下为电气连接参数，将由代码根据表面积计算模块数量来确定 ---
+            # 'number_of_series_strings_in_parallel': 1, # 这个在 Generator:Photovoltaic 中
+            # 'number_of_modules_in_series': 1,         # 这个在 Generator:Photovoltaic 中
+            # --- 热传递模式也将在代码中设置 ---
+            # 'heat_transfer_integration_mode': "Decoupled" # 或 "IntegratedSurfaceOutsideFace"
+        },
+        'sandia_pv_coverage': 0.9, # 假设使用 Sandia 模型时，组件排布更紧密，或者这代表每个组件自身的有效面积与总面积比
+
+        # --- PVWatts Model (如果 pv_model_type == 'PVWatts') ---
+        'pvwatts_dc_system_capacity_per_sqm': 144, # 每平方米屋顶的直流容量 (W/m2) - 用于单一系统估算
+        'pvwatts_module_type': 'Standard',
+        'pvwatts_array_type': 'FixedRoofMounted',
+        'pvwatts_system_losses': 0.14,
+        'pvwatts_dc_ac_ratio': 1.1,
+        'pvwatts_inverter_efficiency': 0.96,
+        'pvwatts_ground_coverage_ratio': 0.4,
+
+
+        # --- 通用参数 ---
+        'pv_inverter_efficiency': 0.96,      # 通用逆变器效率 (用于 Simple 和 Sandia 模型)
+        'heat_transfer_integration_mode': "Decoupled", # PV 传热集成模式
+
+        # --- 阴影/辐射分析参数 (保持不变) ---
+        'shadow_calculation_surface_types': ['ROOF', 'WALL'],
+        'radiation_threshold_high': 1000.0,
+        'radiation_threshold_low': 600.0,
+        'radiation_score_threshold': 70,
+        'max_score': 100.0,
+        'min_score': 0.0,
+        'pv_output_prefix': 'pv',
+        'shadow_output_prefix': 'shadow',
     },
 
     # EUI prediction settings

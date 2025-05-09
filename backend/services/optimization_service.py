@@ -668,7 +668,7 @@ class OptimizationPipeline:
         if not self.config.get('pv_analysis', {}).get('enabled', False):
             logging.info(f"--- {self.unique_id}: PV analysis is disabled ---")
             return
-        if self.optimal_eui_simulated is None or self.optimal_params is None:
+        if self.optimal_eui_simulated is None and self.optimal_params is None:
             logging.error(f"Error: Optimization or validation not completed, cannot perform PV analysis.")
             return
         if self.building_floor_area is None or self.building_floor_area <= 0:

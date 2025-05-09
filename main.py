@@ -1,3 +1,5 @@
+# TODO:使用带倾角的PV太阳能板
+
 import logging
 import sys
 import argparse
@@ -46,6 +48,7 @@ def run_optimization(target_cities, target_ssps, target_btypes):
                         build_model=True,
                         run_opt=True,
                         validate=True,
+                        run_pv=True,
                         save=True
                     )
                 except FileNotFoundError as e:
@@ -122,7 +125,7 @@ def main():
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
                         help='Target cities')
-    parser.add_argument('--ssps', type=str, nargs='+', default=['TMY'], # 'TMY', '126', '245', '370', '434', '585' (CHOICE)
+    parser.add_argument('--ssps', type=str, nargs='+', default=['TMY', '126', '245', '370', '434', '585'], # 'TMY', '126', '245', '370', '434', '585' (CHOICE)
                         help='Target SSP scenarios')
     parser.add_argument('--btypes', type=str, nargs='+', default=['OfficeMedium', 'OfficeLarge','ApartmentHighRise','SingleFamilyResidential','MultiFamilyResidential'],
                         help='Target building types')
