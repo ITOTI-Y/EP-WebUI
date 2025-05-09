@@ -48,6 +48,7 @@ def run_optimization(target_cities, target_ssps, target_btypes):
                         build_model=True,
                         run_opt=True,
                         validate=True,
+                        run_pv=True,
                         save=True
                     )
                 except FileNotFoundError as e:
@@ -119,7 +120,7 @@ def predict_eui(city, ssp, btype):
 
 def main():
     parser = argparse.ArgumentParser(description='EP-WebUI: Energy Performance Web User Interface')
-    parser.add_argument('--mode', type=str, default='collect',
+    parser.add_argument('--mode', type=str, default='optimize',
                         choices=['optimize', 'collect', 'train', 'predict'],
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
