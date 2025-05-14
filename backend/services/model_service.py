@@ -39,12 +39,15 @@ class RegressionNet(torch.nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.layer_1(x)
+        x = self.bn_1(x)
         x = self.relu_1(x)
         x = self.dropout_1(x)
         x = self.layer_2(x)
+        x = self.bn_2(x)
         x = self.relu_2(x)
         x = self.dropout_2(x)
         x = self.layer_3(x)
+        x = self.bn_3(x)
         x = self.relu_3(x)
         x = self.output_layer(x)
         return x

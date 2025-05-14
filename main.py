@@ -8,6 +8,7 @@ from backend.services.optimization_service import OptimizationPipeline
 from backend.services.eui_data_pipeline import EUIDataPipeline
 from backend.services.eui_prediction_service import EUIPredictionService
 from backend.services.model_service import ModelService
+from backend.services.data_analysis_services import data_analysis
 from config import CONFIG
 
 logging.basicConfig(level=logging.INFO,
@@ -132,7 +133,7 @@ def main():
     parser = argparse.ArgumentParser(
         description='EP-WebUI: Energy Performance Web User Interface')
     parser.add_argument('--mode', type=str, default='optimize',
-                        choices=['optimize', 'collect', 'train', 'predict'],
+                        choices=['optimize', 'collect', 'train', 'predict', 'analyze'],
                         help='Operation mode: optimize, azure, collect, train, or predict')
     parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
                         help='Target cities')
@@ -166,6 +167,8 @@ def main():
                 "City, SSP, and building type must be specified for prediction mode.")
             sys.exit(1)
         predict_eui(args.city, args.ssp, args.btype)
+    elif args.mode == 'analyze':
+        data_analysis()
 
 
 if __name__ == "__main__":
