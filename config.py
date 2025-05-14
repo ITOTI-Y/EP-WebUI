@@ -95,9 +95,7 @@ CONFIG = {
         "sensitivity_samples_n": 32,  # Number of samples for Saltelli's sampling
         "n_estimators": 100,  # Number of trees for Random Forest
         "random_state": 10,  # Random state for Random Forest
-        "optimization_model": 'xgb', # ['ols', 'rf', 'xgb']
-        "ga_population_size": 100,  # Population size for genetic algorithm
-        "ga_generations": 100,  # Number of generations for genetic algorithm
+        "surrogate_model": 'xgb', # ['ols', 'rf', 'xgb']
 
         "xgboost_params": {
             "load_saved_model": True,  # Attempt to load a previously saved XGBoost model
@@ -137,7 +135,23 @@ CONFIG = {
                 "reg_lambda": {"type": "float", "low": 1e-8, "high": 1.0, "log": True},
                 # "min_child_weight": {"type": "int", "low": 1, "high": 10}
             }
-        }
+        },
+
+        # Optimizer settings
+        "optimizer_type": "ga",  # 'lbfgsb' or 'ga'
+        "lbfgsb_params": {       # Parameters for L-BFGS-B
+            "maxiter": 150,
+            "disp": False # scipy.optimize.minimize display option
+        },
+        "ga_params": {           # Parameters for Genetic Algorithm (DEAP)
+            "population_size": 100,
+            "num_generations": 50,
+            "cxpb": 0.7,          # Crossover probability
+            "mutpb": 0.3,         # Mutation probability for the individual
+            "indpb": 0.1,        # Independent probability for each attribute to be mutated
+            "tournament_size": 3,
+            "hall_of_fame_size": 1
+        },
     },
 
     # PV system settings
