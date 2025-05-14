@@ -1,19 +1,28 @@
-import time
-import collections
+import os
+import xgboost as xgb
+import optuna
+import joblib
 import numpy as np
 import pandas as pd
 import shutil
 import logging
 import json
-from .pv_service import PVManager
-from .idf_service import IDFModel
-from .simulation_service import EnergyPlusRunner, SimulationResult
 from joblib import Parallel, delayed
 from SALib.sample import saltelli
 from SALib.analyze import sobol
 from scipy.optimize import minimize
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split, KFold
+from sklearn.metrics import root_mean_squared_error
 from statsmodels.formula.api import ols
+from pathlib import Path
+
+# Local imports
+from .pv_service import PVManager
+from .idf_service import IDFModel
+from .simulation_service import EnergyPlusRunner, SimulationResult
+
+logger = logging.getLogger(__name__)
 
 class OptimizationPipeline:
     """
@@ -75,13 +84,13 @@ class OptimizationPipeline:
         """
         proto_dir = self.config['paths']['prototypes_dir']
         if not proto_dir.exists():
-            logging.error(f"Prototype directory not found: {proto_dir}")
+            logger.error(f"Prototype directory not found: {proto_dir}")
             return None
         found = [f for f in proto_dir.glob("*.idf") if self.btype.lower() in f.stem.lower()]
         if not found:
-            logging.error(f"No prototype IDF file found for {self.btype}")
+            logger.error(f"No prototype IDF file found for {self.btype}")
             return None
-        logging.info(f"Found prototype IDF file: {found[0]}")
+        logger.info(f"Found prototype IDF file: {found[0]}")
         return found[0]
     
     def _find_weather_file(self):
@@ -96,13 +105,13 @@ class OptimizationPipeline:
             epw_dir = self.config['paths']['ftmy_dir']
 
         if not epw_dir.exists():
-            logging.error(f"Weather directory not found: {epw_dir}")
+            logger.error(f"Weather directory not found: {epw_dir}")
             return None
         found = [f for f in epw_dir.glob("*.epw") if search_city in f.stem.lower() and search_ssp in f.stem.lower()]
         if not found:
-            logging.error(f"No weather file found for {self.city} and {self.ssp}")
+            logger.error(f"No weather file found for {self.city} and {self.ssp}")
             return None
-        logging.info(f"Found weather file: {found[0]}")
+        logger.info(f"Found weather file: {found[0]}")
         return found[0]
     
     def _continuous_to_discrete(self, value: float, param_name: str) -> float:
@@ -117,10 +126,10 @@ class OptimizationPipeline:
 
         discrete_levels = self.ecm_ranges.get(param_name)
         if not discrete_levels:
-            logging.error(f"No discrete levels defined for {param_name}")
+            logger.error(f"No discrete levels defined for {param_name}")
             raise ValueError(f"Unknown ECM Parameter: {param_name}")
         if not isinstance(discrete_levels, list) or len(discrete_levels) == 0:
-            logging.error(f"Invalid discrete levels for {param_name}: {discrete_levels}")
+            logger.error(f"Invalid discrete levels for {param_name}: {discrete_levels}")
             raise ValueError(f"The provided discrete levels for parameter '{param_name}' are invalid: {discrete_levels}")
 
         # Create split points, one more than the number of discrete levels
@@ -191,7 +200,7 @@ class OptimizationPipeline:
                 # Retrieve the inner dictionary associated with a specific building type from the outer dictionary.
                 inner_map = reduction_map.get(btype_key, {})
                 if not inner_map:
-                    logging.warning(f"No lighting reduction map found for {btype_key}")
+                    logger.warning(f"No lighting reduction map found for {btype_key}")
                 
                 # Retrieve the reduction factor for the specified lighting level.
                 reduction_factor = inner_map.get(lighting_level, 1.0)
@@ -199,7 +208,7 @@ class OptimizationPipeline:
                 if reduction_factor < 1.0:
                     idf_model.apply_lighting_reduction(reduction_factor, btype_key)
                 elif reduction_factor >= 1.0 and lighting_level != 0 :
-                    logging.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
+                    logger.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
                 
             elif param_name in ['shgc', 'win_u', 'vt']:
                 # Process Window properties
@@ -269,16 +278,16 @@ class OptimizationPipeline:
                 )
                 eui = result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
                 if eui is None:
-                    logging.error(f"Failed to calculate source EUI for run {run_label}")
+                    logger.error(f"Failed to calculate source EUI for run {run_label}")
                 if not output_intermediary_files:
                     shutil.rmtree(run_dir, ignore_errors=True)
                 return eui, floor_area
             else:
-                logging.error(f"Simulation failed for run {run_label}: {message}")
+                logger.error(f"Simulation failed for run {run_label}: {message}")
                 return None, floor_area
         
         except Exception as e:
-            logging.error(f"An error occurred while running simulation {run_label}: {e}")
+            logger.error(f"An error occurred while running simulation {run_label}: {e}")
             shutil.rmtree(run_dir, ignore_errors=True)
             return None, floor_area
     
@@ -286,16 +295,16 @@ class OptimizationPipeline:
         """
         Run a baseline simulation and save EUI
         """
-        logging.info(f"Running baseline simulation for {self.unique_id}")
+        logger.info(f"Running baseline simulation for {self.unique_id}")
         self.baseline_eui, self.building_floor_area = self._run_single_simulation_internal(is_baseline=True, run_id="baseline")
         if self.baseline_eui is not None:
-            logging.info(f"Baseline simulation completed successfully. Reference source EUI: {self.baseline_eui} kWh/m2/yr")
+            logger.info(f"Baseline simulation completed successfully. Reference source EUI: {self.baseline_eui} kWh/m2/yr")
         else:
-            logging.error(f"Baseline simulation failed for {self.unique_id}")
+            logger.error(f"Baseline simulation failed for {self.unique_id}")
         if self.building_floor_area is not None and self.building_floor_area > 0:
-            logging.info(f"Building floor area: {self.building_floor_area:.2f} m2")
+            logger.info(f"Building floor area: {self.building_floor_area:.2f} m2")
         else:
-            logging.warning(f"Warning: Unable to obtain a valid building floor area.")
+            logger.warning(f"Warning: Unable to obtain a valid building floor area.")
         return self.baseline_eui
     
     def _run_sensitivity_sample_point(self, params_array: np.ndarray, sample_index: int) -> dict|None:
@@ -312,7 +321,7 @@ class OptimizationPipeline:
         params_dict = self._params_array_to_dict(params_array)
         run_id = f"sample_{sample_index}"
         eui, _ = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id, output_intermediary_files=False)
-        logging.info(f"Completed sample {sample_index} with EUI: {eui}")
+        logger.info(f"Completed sample {sample_index} with EUI: {eui}")
         if eui is not None:
             result_dict = params_dict.copy()
             result_dict['eui'] = eui
@@ -357,12 +366,12 @@ class OptimizationPipeline:
                 Y[i] = discrete_lookup[discrete_key]
             else:
                 # If an exact match can't be found among the discrete results.
-                logging.warning(f"Warning: Exact match: {discrete_key} was not found for sample {i} in the discrete result. the EUI will be NaN.")
+                logger.warning(f"Warning: Exact match: {discrete_key} was not found for sample {i} in the discrete result. the EUI will be NaN.")
         
         # Check if any NaNs are present in the EUI array
         nan_count = np.isnan(Y).sum()
         if nan_count > 0:
-            logging.warning(f"Warning: {nan_count}/{num_continuous} consecutive samples failed to find the corresponding discrete EUI.")
+            logger.warning(f"Warning: {nan_count}/{num_continuous} consecutive samples failed to find the corresponding discrete EUI.")
         
         return Y
     
@@ -370,7 +379,7 @@ class OptimizationPipeline:
         """
         Perform the Sobol sensitivity analysis process.
         """
-        logging.info(f"--- {self.unique_id}: Run sensitivity analysis ---")
+        logger.info(f"--- {self.unique_id}: Run sensitivity analysis ---")
         num_vars = len(self.ecm_names)
         N_samples_base = self.config['analysis']['sensitivity_samples_n']
         num_cpu = self.config['constants']['cpu_count_override']
@@ -394,7 +403,7 @@ class OptimizationPipeline:
         
         param_values_discrete_list = [list(s) for s in param_values_discrete_unique]
         num_unique_samples = len(param_values_discrete_list)
-        logging.info(f"Generated {param_values_continuous.shape[0]} continuous samples, which map to {num_unique_samples} unique discrete parameter combinations.")
+        logger.info(f"Generated {param_values_continuous.shape[0]} continuous samples, which map to {num_unique_samples} unique discrete parameter combinations.")
 
         # Run Simulation for Discrete Samples in Parallel
         discrete_results_file = self.work_dir / 'sensitivity_discrete_results.csv'
@@ -402,7 +411,7 @@ class OptimizationPipeline:
             # Set n_jobs to 1 if debug, otherwise use all cores.
             n_jobs = 1 if self.config['constants']['debug'] else num_cpu
 
-            logging.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {n_jobs} cores)...")
+            logger.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {n_jobs} cores)...")
             results_list = Parallel(n_jobs=n_jobs, verbose=10)(
                 delayed(self._run_sensitivity_sample_point)(params, i)
                 for i, params in enumerate(param_values_discrete_list)
@@ -410,43 +419,43 @@ class OptimizationPipeline:
 
             successful_results = [r for r in results_list if r is not None]
             if not successful_results:
-                logging.error("No successful simulations completed during sensitivity analysis.")
+                logger.error("No successful simulations completed during sensitivity analysis.")
                 return
             
             self.sensitivity_samples = pd.DataFrame(successful_results)
             self.sensitivity_samples.to_csv(discrete_results_file, index=False)
-            logging.info(f"Discrete sensitivity analysis results saved to {discrete_results_file}")
+            logger.info(f"Discrete sensitivity analysis results saved to {discrete_results_file}")
         else:
-            logging.info(f"Loading discrete sensitivity analysis results from {discrete_results_file}")
+            logger.info(f"Loading discrete sensitivity analysis results from {discrete_results_file}")
             self.sensitivity_samples = pd.read_csv(discrete_results_file)
 
         # Refilling the EUI for Continuous Sample Spaces.
-        logging.info("Re-populating the EUI of a continuous sample space for Sobol analysis...")
+        logger.info("Re-populating the EUI of a continuous sample space for Sobol analysis...")
         Y = self._refill_continuous_space(param_values_continuous, self.sensitivity_samples)
         if np.isnan(Y).all():
-            logging.error("Error: Unable to locate EUIs for any consecutive samples, Sobol analysis cannot be performed.")
+            logger.error("Error: Unable to locate EUIs for any consecutive samples, Sobol analysis cannot be performed.")
             return
 
         # Handle NaN in Y (e.g., remove corresponding samples or padding, choose remove here)
         valid_indices = ~np.isnan(Y)
         if not np.all(valid_indices):
-            logging.warning(f"Warning: {np.isnan(Y).sum()} samples with NaN EUI values were removed from the analysis.")
+            logger.warning(f"Warning: {np.isnan(Y).sum()} samples with NaN EUI values were removed from the analysis.")
             param_values_continuous_valid = param_values_continuous[valid_indices]
             Y_valid = Y[valid_indices]
             if len(Y_valid) < 2:
-                logging.error("Error: Not enough valid samples for Sobol analysis.")
+                logger.error("Error: Not enough valid samples for Sobol analysis.")
                 return
         else:
             param_values_continuous_valid = param_values_continuous
             Y_valid = Y
 
         # Perform Sobol Analysis
-        logging.info("Performing Sobol sensitivity analysis...")
+        logger.info("Performing Sobol sensitivity analysis...")
         try:
             Si = sobol.analyze(problem, Y_valid, calc_second_order=True, print_to_console=True)
             self.sensitivity_results = Si
         except Exception as e:
-            logging.error(f"Error: An issue arose while performing the Sobol analysis: {e}")
+            logger.error(f"Error: An issue arose while performing the Sobol analysis: {e}")
             return
 
         first_order = pd.Series(Si['S1'], index=problem['names'], name='S1')
@@ -454,78 +463,392 @@ class OptimizationPipeline:
         sensitivity_indices = pd.concat([first_order, total_order], axis=1)
         si_file = self.work_dir / 'sensitivity_indices.csv'
         sensitivity_indices.to_csv(si_file)
-        logging.info(f"Sobol sensitivity indices saved to {si_file}")
+        logger.info(f"Sobol sensitivity indices saved to {si_file}")
         if 'S2' in Si and Si['S2'] is not None:
             second_order = pd.DataFrame(Si['S2'], index=problem['names'], columns=problem['names'])
             s2_file = self.work_dir / 'sensitivity_indices_S2.csv'
             second_order.to_csv(s2_file)
-            logging.info(f"Sobol second-order sensitivity indices saved to {s2_file}")
+            logger.info(f"Sobol second-order sensitivity indices saved to {s2_file}")
     
-    def build_surrogate_model(self, model_type: str=None):
-        """
-        Based on the sensitivity analysis, construct a surrogate model.
+    def build_surrogate_model(self, model_type: str = None):
+        """Builds a surrogate model based on sensitivity analysis results.
+
+        This method acts as a dispatcher to specific model building methods
+        based on the model_type.
 
         Args:
-            model_type (str, optional): Optimization model type. Defaults to None.
+            model_type (str, optional): The type of surrogate model to build.
+                If None, uses the type specified in the configuration.
+                Defaults to None.
         """
         model_type = model_type if model_type else self.config['analysis']['optimization_model']
-        logging.info(f"Attempting to build a {model_type} surrogate model...")
+        logger.info(f"Attempting to build a {model_type.upper()} surrogate model for {self.unique_id}...")
 
         if self.sensitivity_samples is None:
             samples_file = self.work_dir / 'sensitivity_discrete_results.csv'
             if samples_file.exists():
-                logging.info(f"Loading discrete sample data from file: {samples_file}")
+                logger.info(f"Loading discrete sample data from: {samples_file}")
                 self.sensitivity_samples = pd.read_csv(samples_file)
             else:
-                logging.error("Error: Sensitivity analysis sample data not found; a surrogate model cannot be built.\
-                            Please run `run_sensitivity_analysis()` first.")
+                logger.error(
+                    "Error: Sensitivity analysis sample data not found. "
+                    "Cannot build surrogate model. Please run `run_sensitivity_analysis()` first."
+                )
                 return
-        
-        # Preparing data for modeling (X: Parameters, Y: EUI).
-        df = self.sensitivity_samples.dropna(subset=['eui'])
-        X = df[self.ecm_names]
-        Y = df['eui']
 
-        if X.empty or Y.empty:
-            logging.error("Error: Unable to build a surrogate model due to missing sample data or an invalid EUI column.")
+        df_clean = self.sensitivity_samples.dropna(subset=['eui'] + self.ecm_names)
+        if df_clean.empty:
+            logger.error("Error: No valid (non-NaN) sample data available after cleaning. Cannot build surrogate model.")
             return
-    
+
+        X_all = df_clean[self.ecm_names]
+        Y_all = df_clean['eui']
+
+        if X_all.empty or Y_all.empty:
+            logger.error("Error: Feature (X) or target (Y) data is empty. Cannot build surrogate model.")
+            return
+
+        model_type_lower = model_type.lower()
         model = None
-        summary_info = None
-        model_file = self.work_dir / f"surrogate_model_{model_type}.txt"
+        summary_info_dict = {} # Store various summary pieces
 
         try:
-            if model_type.lower() == 'ols':
-                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
-                model = ols(formula, data=df).fit()
-                summary_info = model.summary().as_text()
-                with open(model_file, 'w') as f: f.write(summary_info)
-            elif model_type.lower() == 'rf':
-                model = RandomForestRegressor(n_estimators=self.config['analysis']['n_estimators'], random_state=self.config['analysis']['random_state'], n_jobs=self.config['constants']['cpu_count_override'])
-                model.fit(X, Y)
-                importances = pd.Series(model.feature_importances_, index=self.ecm_names).sort_values(ascending=False) # Extracting feature importance.
-                summary_info = importances.to_string()
-                importances.to_csv(model_file.with_name(model_file.stem + '_importance.csv'))
-                model_summary_file = model_file.with_name(model_file.stem + '_summary.txt')
-                with open(model_summary_file, 'w') as f:
-                    f.write(f"Random Forest Feature Importances:\n")
-                    f.write(summary_info)
-                    logging.info(f"Random Forest summary (importances) saved to {model_summary_file}")
+            if model_type_lower == 'ols':
+                model, summary_info_dict = self._build_ols_model(X_all, Y_all)
+            elif model_type_lower == 'rf':
+                model, summary_info_dict = self._build_rf_model(X_all, Y_all)
+            elif model_type_lower == 'xgb':
+                model, summary_info_dict = self._build_xgboost_model(X_all, Y_all)
             else:
-                logging.warning(f"Warning: The surrogate model type '{model_type}' is not supported. Reverting to Ordinary Least Squares (OLS).")
-                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
-                model = ols(formula, data=df).fit()
-                summary_info = model.summary().as_text()
-                with open(model_file.replace(f'_{model_type}.txt', '_ols.txt'), 'w') as f: f.write(summary_info)
+                logger.warning(
+                    f"Unsupported surrogate model type: {model_type}. Defaulting to OLS."
+                )
+                model, summary_info_dict = self._build_ols_model(X_all, Y_all)
+                model_type_lower = 'ols' # Update for correct file naming
 
-            self.surrogate_model = model
-            self.surrogate_model_summary = summary_info
-            logging.info(f"A surrogate model ({model_type}) has been successfully constructed, and a summary of its key information has been saved to: {model_file}.")
-        
+            if model:
+                self.surrogate_model = model
+                # Construct a comprehensive summary string from the dictionary
+                summary_string_parts = [f"{k.replace('_', ' ').title()}:\n{v}\n" for k, v in summary_info_dict.items() if (isinstance(v, pd.Series) and not v.empty) or (not isinstance(v, pd.Series) and v)]
+                self.surrogate_model_summary = "\n".join(summary_string_parts)
+
+                # --- Unified File Saving ---
+                model_file_base_name = f"surrogate_model_{model_type_lower}"
+                summary_file_path = self.work_dir / f"{model_file_base_name}_summary.txt"
+
+                with open(summary_file_path, 'w') as f:
+                    f.write(f"{model_type_lower.upper()} Surrogate Model Details for {self.unique_id}\n")
+                    f.write("=" * 50 + "\n")
+                    if 'parameters' in summary_info_dict and summary_info_dict['parameters']:
+                        f.write("Model Parameters:\n")
+                        if isinstance(summary_info_dict['parameters'], dict):
+                            json.dump(summary_info_dict['parameters'], f, indent=4)
+                        else:
+                            f.write(str(summary_info_dict['parameters']))
+                        f.write("\n\n")
+                    if 'summary_text' in summary_info_dict and summary_info_dict['summary_text']: # OLS summary
+                        f.write("Model Summary / Statistics:\n")
+                        f.write(str(summary_info_dict['summary_text']))
+                        f.write("\n\n")
+                    if 'feature_importances' in summary_info_dict and summary_info_dict['feature_importances'] is not None:
+                        f.write("Feature Importances:\n")
+                        f.write(summary_info_dict['feature_importances'].to_string()) # Assuming it's a Pandas Series
+                        f.write("\n\n")
+                        # Save importances to CSV
+                        importances_csv_path = self.work_dir / f"{model_file_base_name}_importances.csv"
+                        try:
+                            summary_info_dict['feature_importances'].to_csv(importances_csv_path)
+                            logger.info(f"Feature importances saved to {importances_csv_path}")
+                        except Exception as e_csv:
+                            logger.error(f"Error saving feature importances to CSV {importances_csv_path}: {e_csv}")
+
+
+                logger.info(
+                    f"{model_type_lower.upper()} surrogate model built. "
+                    f"Details saved to {summary_file_path}"
+                )
+
+            else:
+                logger.error(f"Failed to build surrogate model of type: {model_type_lower}")
+                self.surrogate_model = None
+                self.surrogate_model_summary = None
+
         except Exception as e:
-            logging.error(f"Error: An issue arose while building the surrogate model: {e}")
+            logger.error(f"An unexpected error occurred during build_surrogate_model for type {model_type_lower}: {e}", exc_info=True)
             self.surrogate_model = None
             self.surrogate_model_summary = None
+
+    def _build_ols_model(self, X: pd.DataFrame, Y: pd.Series) -> tuple[object | None, dict]:
+        """Builds an Ordinary Least Squares (OLS) surrogate model.
+
+        Args:
+            X (pd.DataFrame): DataFrame of features.
+            Y (pd.Series): Series of target EUI values.
+
+        Returns:
+            tuple[object | None, dict]: A tuple containing the
+                trained OLS model object (or None if failed) and a dictionary
+                containing summary information (e.g., 'summary_text').
+        """
+        logger.info(f"Building OLS model for {self.unique_id}...")
+        summary_info_dict = {'parameters': 'OLS defaults'}
+        try:
+            df_for_ols = pd.concat([X, Y.rename('eui')], axis=1)
+            formula = 'eui ~ ' + ' + '.join(self.ecm_names)
+            model = ols(formula, data=df_for_ols).fit()
+            summary_info_dict['summary_text'] = model.summary().as_text()
+            logger.info(f"OLS model built successfully for {self.unique_id}.")
+            return model, summary_info_dict
+        except Exception as e:
+            logger.error(f"Error building OLS model for {self.unique_id}: {e}", exc_info=True)
+            return None, {'summary_text': f"Failed to build OLS model: {e}"}
+        
+    def _build_rf_model(self, X: pd.DataFrame, Y: pd.Series) -> tuple[object | None, dict]:
+        """Builds a Random Forest (RF) surrogate model.
+
+        Args:
+            X (pd.DataFrame): DataFrame of features.
+            Y (pd.Series): Series of target EUI values.
+
+        Returns:
+            tuple[object | None, dict]: A tuple containing the
+                trained RF model object (or None if failed) and a dictionary
+                containing summary information (e.g., 'feature_importances').
+        """
+        logger.info(f"Building Random Forest model for {self.unique_id}...")
+        rf_params = {
+            'n_estimators': self.config['analysis'].get('n_estimators', 100),
+            'random_state': self.config['analysis'].get('random_state', 10),
+            'n_jobs': self.config['constants'].get('cpu_count_override', -1)
+            # Add more RF params from config if needed
+        }
+        summary_info_dict = {'parameters': rf_params}
+
+        try:
+            model = RandomForestRegressor(**rf_params)
+            model.fit(X, Y)
+            importances = pd.Series(model.feature_importances_, index=self.ecm_names).sort_values(ascending=False)
+            summary_info_dict['feature_importances'] = importances
+            logger.info(f"Random Forest model built successfully for {self.unique_id}.")
+            return model, summary_info_dict
+        except Exception as e:
+            logger.error(f"Error building Random Forest model for {self.unique_id}: {e}", exc_info=True)
+            summary_info_dict['feature_importances'] = None
+            summary_info_dict['error'] = f"Failed to build RF model: {e}"
+            return None, summary_info_dict
+        
+    def _build_xgboost_model(self, X_all: pd.DataFrame, Y_all: pd.Series) -> tuple[object | None, dict]:
+        """Builds an XGBoost surrogate model, with optional Optuna tuning and model persistence.
+
+        Args:
+            X_all (pd.DataFrame): DataFrame of all available features.
+            Y_all (pd.Series): Series of all available target EUI values.
+
+        Returns:
+            tuple[object | None, dict]: A tuple containing the
+                trained XGBoost model object (or None if failed) and a dictionary
+                containing summary information (e.g., 'best_params', 'feature_importances').
+        """
+        logger.info(f"Building XGBoost model for {self.unique_id}...")
+        summary_info_dict = {}
+        
+        xgb_config = self.config['analysis'].get('xgboost_params', {})
+        model_filename = xgb_config.get('model_save_filename', f"xgboost_surrogate_{self.unique_id}.json")
+        model_save_path = self.work_dir / model_filename
+        best_params_filename = xgb_config.get('best_params_filename', f"xgboost_best_params_{self.unique_id}.json")
+        best_params_path = self.work_dir / best_params_filename
+
+
+        # 1. Attempt to load saved model
+        if xgb_config.get('load_saved_model', False) and model_save_path.exists():
+            try:
+                loaded_model = xgb.XGBRegressor()
+                loaded_model.load_model(model_save_path)
+                logger.info(f"Loaded saved XGBoost model from {model_save_path} for {self.unique_id}.")
+                
+                # Load best_params if available
+                best_params_loaded = {}
+                if best_params_path.exists():
+                    with open(best_params_path, 'r') as f:
+                        best_params_loaded = json.load(f)
+                    summary_info_dict['parameters'] = best_params_loaded
+                    logger.info(f"Loaded best parameters from {best_params_path}")
+                else:
+                    summary_info_dict['parameters'] = "Parameters not found, using loaded model's internal params."
+
+                importances = pd.Series(loaded_model.feature_importances_, index=X_all.columns).sort_values(ascending=False)
+                summary_info_dict['feature_importances'] = importances
+                return loaded_model, summary_info_dict
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load saved XGBoost model from {model_save_path} for {self.unique_id}: {e}. "
+                    "Proceeding to train a new model."
+                )
+
+        # 2. Data Split for training and (XGBoost's internal) validation/early stopping
+        # This validation set is for the final model training's early stopping,
+        # Optuna will do its own internal CV or splits.
+        val_split_ratio = xgb_config.get('validation_split_ratio', 0.2)
+        if val_split_ratio <= 0 or val_split_ratio >=1: # Ensure some data for both
+             X_train, Y_train = X_all, Y_all
+             X_val, Y_val = X_all.iloc[0:0], Y_all.iloc[0:0] # Empty val set if no split
+             logger.info(f"Using all data for training XGBoost for {self.unique_id}, no validation set for early stopping.")
+        else:
+            X_train, X_val, Y_train, Y_val = train_test_split(
+                X_all, Y_all, test_size=val_split_ratio, random_state=self.config['analysis'].get('random_state', 10)
+            )
+            logger.info(
+                f"Split data for XGBoost training: {len(X_train)} train, {len(X_val)} validation samples for {self.unique_id}."
+            )
+
+
+        # 3. Hyperparameter Acquisition
+        best_params = {}
+        if xgb_config.get('use_optuna_tuning', False):
+            logger.info(f"Starting Optuna hyperparameter tuning for XGBoost for {self.unique_id}...")
+            try:
+                # Pass the training portion of the data to Optuna
+                best_params = self._tune_xgboost_with_optuna(X_train, Y_train)
+                summary_info_dict['optuna_best_params'] = best_params # Store Optuna chosen params
+            except Exception as e_optuna:
+                logger.error(f"Optuna tuning failed for {self.unique_id}: {e_optuna}. Falling back to fixed params.", exc_info=True)
+                best_params = xgb_config.get('fixed_params', {}).copy() # Use copy
+        else:
+            logger.info(f"Using fixed hyperparameters for XGBoost for {self.unique_id}.")
+            best_params = xgb_config.get('fixed_params', {}).copy() # Use copy
+        
+        # Ensure essential params are present, if not provided by Optuna or fixed_params
+        best_params.setdefault('objective', 'reg:squarederror')
+        best_params.setdefault('random_state', self.config['analysis'].get('random_state', 10))
+        summary_info_dict['parameters'] = best_params # These are the final params used for training
+
+
+        # 4. Train Final Model
+        logger.info(f"Training final XGBoost model for {self.unique_id} with parameters: {best_params}")
+        try:
+            final_model = xgb.XGBRegressor(**best_params, early_stopping_rounds=xgb_config.get('early_stopping_rounds', 10))
+            fit_params = {}
+            if not X_val.empty: # Only add eval_set if X_val is not empty
+                fit_params['eval_set'] = [(X_val, Y_val)]
+            
+            final_model.fit(X_train, Y_train, verbose=False, **fit_params)
+
+            # 5. Save Model
+            if model_save_path:
+                try:
+                    model_save_path.parent.mkdir(parents=True, exist_ok=True) # Ensure directory exists
+                    final_model.save_model(model_save_path)
+                    logger.info(f"Saved trained XGBoost model to {model_save_path} for {self.unique_id}.")
+                    # Save the best_params to JSON alongside the model
+                    with open(best_params_path, 'w') as f:
+                        json.dump(best_params, f, indent=4, sort_keys=True)
+                    logger.info(f"Saved XGBoost best_params to {best_params_path} for {self.unique_id}.")
+                except Exception as e_save:
+                    logger.error(f"Error saving XGBoost model or params for {self.unique_id}: {e_save}", exc_info=True)
+            
+            # 6. Extract Feature Importances and Return
+            importances = pd.Series(final_model.feature_importances_, index=X_all.columns).sort_values(ascending=False)
+            summary_info_dict['feature_importances'] = importances
+            logger.info(f"XGBoost model built and trained successfully for {self.unique_id}.")
+            return final_model, summary_info_dict
+
+        except Exception as e_train:
+            logger.error(f"Error training final XGBoost model for {self.unique_id}: {e_train}", exc_info=True)
+            summary_info_dict['error'] = f"Failed to train XGBoost model: {e_train}"
+            return None, summary_info_dict
+        
+    def _tune_xgboost_with_optuna(self, X_train_outer: pd.DataFrame, Y_train_outer: pd.Series) -> dict:
+        """Tunes XGBoost hyperparameters using Optuna.
+
+        This method defines an objective function for Optuna, which internally
+        uses K-Fold cross-validation on the provided training data to evaluate
+        each hyperparameter set.
+
+        Args:
+            X_train_outer (pd.DataFrame): Features for Optuna tuning (will be split by KFold).
+            Y_train_outer (pd.Series): Target for Optuna tuning.
+
+        Returns:
+            dict: A dictionary containing the best hyperparameters found by Optuna.
+        """
+        xgb_config = self.config['analysis'].get('xgboost_params', {})
+        optuna_param_space_config = xgb_config.get('optuna_param_space', {})
+        fixed_params_for_tuning = xgb_config.get('fixed_params', {}).copy()
+        fixed_params_for_tuning.setdefault('objective', 'reg:squarederror')
+        fixed_params_for_tuning.setdefault('random_state', self.config['analysis'].get('random_state', 10))
+
+        def objective(trial: optuna.trial.Trial) -> float:
+            params = {}
+            for name, p_config in optuna_param_space_config.items():
+                param_type = p_config.get('type', 'float')
+                if param_type == 'int':
+                    params[name] = trial.suggest_int(name, p_config['low'], p_config['high'], step=p_config.get('step', 1), log=p_config.get('log', False))
+                elif param_type == 'float':
+                    params[name] = trial.suggest_float(name, p_config['low'], p_config['high'], step=p_config.get('step'), log=p_config.get('log', False))
+                elif param_type == 'categorical':
+                    params[name] = trial.suggest_categorical(name, p_config['choices'])
+                # Add more types if needed (e.g., discrete_uniform)
+            
+            params.update(fixed_params_for_tuning) # Add fixed params like objective, random_state
+
+            # K-Fold Cross-validation for robust evaluation
+            kf = KFold(n_splits=xgb_config.get('optuna_cv_folds', 3), 
+                       shuffle=True, 
+                       random_state=self.config['analysis'].get('random_state', 10))
+            
+            scores_rmse = []
+            for fold, (train_idx, val_idx) in enumerate(kf.split(X_train_outer, Y_train_outer)):
+                X_cv_train, X_cv_val = X_train_outer.iloc[train_idx], X_train_outer.iloc[val_idx]
+                Y_cv_train, Y_cv_val = Y_train_outer.iloc[train_idx], Y_train_outer.iloc[val_idx]
+
+                model_cv = xgb.XGBRegressor(**params, early_stopping_rounds=xgb_config.get('early_stopping_rounds', 10))
+                try:
+                    model_cv.fit(X_cv_train, Y_cv_train,
+                                 eval_set=[(X_cv_val, Y_cv_val)],
+                                 verbose=False)
+                    preds = model_cv.predict(X_cv_val)
+                    rmse = root_mean_squared_error(Y_cv_val, preds)
+                    scores_rmse.append(rmse)
+                except Exception as e_cv:
+                    logger.warning(f"Optuna CV fold {fold+1} failed for trial {trial.number} with params {params}: {e_cv}")
+                    return float('inf') # Penalize failed trials
+
+            if not scores_rmse: # All folds failed
+                logger.warning(f"Optuna trial {trial.number} failed across all CV folds with params {params}.")
+                return float('inf')
+
+            return sum(scores_rmse) / len(scores_rmse) # Average RMSE
+
+        study_name = f"xgboost-tuning-{self.unique_id}"
+        # You might want to configure Optuna storage for persistent studies
+        # storage_name = f"sqlite:///{self.work_dir / 'optuna_study.db'}"
+        # study = optuna.create_study(study_name=study_name, storage=storage_name, load_if_exists=True, direction='minimize')
+        study = optuna.create_study(study_name=study_name, direction='minimize')
+        
+        try:
+            study.optimize(objective,
+                           n_trials=xgb_config.get('optuna_n_trials', 50),
+                           timeout=xgb_config.get('optuna_timeout', None),
+                           n_jobs=xgb_config.get('optuna_n_jobs', 1)) # Optuna can parallelize trials
+        except optuna.exceptions.OptunaError as e_opt_study:
+            logger.error(f"Optuna study optimization encountered an error for {self.unique_id}: {e_opt_study}", exc_info=True)
+            # Fallback or re-raise, here we'll return current best or empty
+            if study.best_trial:
+                logger.warning("Optuna study stopped prematurely, returning best trial so far.")
+                return study.best_params
+            else:
+                logger.warning("Optuna study stopped prematurely with no successful trials. Returning empty params.")
+                return {}
+
+
+        logger.info(f"Optuna study for {self.unique_id} best trial RMSE: {study.best_value:.4f}")
+        logger.info(f"Optuna study for {self.unique_id} best params: {study.best_params}")
+        
+        # Combine Optuna's best params with any other fixed params that weren't part of the search space
+        final_best_params = fixed_params_for_tuning.copy()
+        final_best_params.update(study.best_params)
+        
+        return final_best_params
     
     def optimize(self, model_type: str=None):
         """
@@ -535,13 +858,13 @@ class OptimizationPipeline:
             model_type (str, optional): Optimization model type. Defaults to None.
         """
         model_type = model_type if model_type else self.config['analysis']['optimization_model']
-        logging.info(f"--- {self.unique_id}: Optimizing with a Surrogate Model ({model_type}) ---")
+        logger.info(f"--- {self.unique_id}: Optimizing with a Surrogate Model ({model_type}) ---")
 
         if self.surrogate_model is None:
-            logging.info("Info: The surrogate model hasn't been built yet; attempting to construct it now...")
+            logger.info("Info: The surrogate model hasn't been built yet; attempting to construct it now...")
             self.build_surrogate_model(model_type=model_type)
             if self.surrogate_model is None:
-                logging.error("Error: Unable to build agent model, optimization aborted.")
+                logger.error("Error: Unable to build agent model, optimization aborted.")
             return
         
         # Define the objective function for the surrogate model
@@ -561,7 +884,7 @@ class OptimizationPipeline:
                 predicted_eui = self.surrogate_model.predict(params_df)
                 return float(predicted_eui[0]) if hasattr(predicted_eui, '__len__') else float(predicted_eui)
             except Exception as e:
-                logging.warning(f"Warning: The surrogate model's prediction failed: {e}. Parameters: {params_array}. Returning the maximum value as a fallback.")
+                logger.warning(f"Warning: The surrogate model's prediction failed: {e}. Parameters: {params_array}. Returning the maximum value as a fallback.")
                 return float('inf')
         
         # Define the bounds for the optimization
@@ -575,7 +898,7 @@ class OptimizationPipeline:
             initial_guess.append(np.mean(levels) if not non_zero_levels else non_zero_levels[0])
 
         # Perform the optimization
-        logging.info("Starting the optimization process...")
+        logger.info("Starting the optimization process...")
         try:
             result = minimize(
                 objective_function, # objective function
@@ -592,16 +915,16 @@ class OptimizationPipeline:
                 self.optimal_params = self._map_continuous_to_nearest_discrete(optimal_params_continuous) # Map the continuous parameters to the nearest discrete values.
                 # Leveraging a surrogate model to predict the EUI of discrete optima
                 self.optimal_eui_predicted = objective_function(list(self.optimal_params.values()))
-                logging.info(f"Optimization successful. Projected optimal EUI: {self.optimal_eui_predicted:.2f}")
-                logging.info("Optimal parameter set (discrete):")
+                logger.info(f"Optimization successful. Projected optimal EUI: {self.optimal_eui_predicted:.2f}")
+                logger.info("Optimal parameter set (discrete):")
                 for name, val in self.optimal_params.items():
-                    logging.info(f"{name}: {val:.2f}")
+                    logger.info(f"{name}: {val:.2f}")
             else:
-                logging.error(f"Optimization failed. Reason: {result.message}")
+                logger.error(f"Optimization failed. Reason: {result.message}")
                 self.optimal_params = None
                 self.optimal_eui_predicted = None
         except Exception as e:
-            logging.error(f"Error: An issue arose while optimizing: {e}")
+            logger.error(f"Error: An issue arose while optimizing: {e}")
             self.optimal_params = None
             self.optimal_eui_predicted = None
 
@@ -628,10 +951,10 @@ class OptimizationPipeline:
         Execute EnergyPlus simulations with optimized parameters to validate the predicted results.
         """
         if self.optimal_params is None:
-            logging.error("Error: Optimization parameters not found; verification cannot proceed. Please run `optimize()` first.")
+            logger.error("Error: Optimization parameters not found; verification cannot proceed. Please run `optimize()` first.")
             return
         
-        logging.info(f"--- {self.unique_id}: Validating the optimal parameter set ---")
+        logger.info(f"--- {self.unique_id}: Validating the optimal parameter set ---")
         self.optimal_eui_simulated, floor_area = self._run_single_simulation_internal(
             params_dict=self.optimal_params,
             run_id=f"optimized",
@@ -640,45 +963,45 @@ class OptimizationPipeline:
             self.building_floor_area = floor_area # Update the building floor area
 
         if self.optimal_eui_simulated:
-            logging.info(f"Optimal Simulated EUI: {self.optimal_eui_simulated:.2f} kWh/m².")
+            logger.info(f"Optimal Simulated EUI: {self.optimal_eui_simulated:.2f} kWh/m².")
 
             if self.optimal_eui_predicted:
                 self.optimization_bias = abs(self.optimal_eui_simulated - self.optimal_eui_predicted) / self.optimal_eui_simulated * 100
-                logging.info(f"Optimization bias: {self.optimization_bias:.2f}%")
+                logger.info(f"Optimization bias: {self.optimization_bias:.2f}%")
             else:
-                logging.warning("Warning: The predicted EUI is not available. The bias cannot be calculated.")
+                logger.warning("Warning: The predicted EUI is not available. The bias cannot be calculated.")
 
             if not self.baseline_eui:
-                logging.info("Info: The baseline EUI hasn't been calculated. Attempting to run it now...")
+                logger.info("Info: The baseline EUI hasn't been calculated. Attempting to run it now...")
                 self.run_baseline_simulation()
             
             if self.baseline_eui and self.baseline_eui > 0:
                 self.optimization_improvement = (self.baseline_eui - self.optimal_eui_simulated) / self.baseline_eui * 100
-                logging.info(f"Info: EUI Improvement (Relative to Baseline): {self.optimization_improvement:.2f}%")
+                logger.info(f"Info: EUI Improvement (Relative to Baseline): {self.optimization_improvement:.2f}%")
 
             elif self.baseline_eui == 0:
-                logging.warning("Warning: Improvement rate cannot be calculated (baseline EUI is zero).")
+                logger.warning("Warning: Improvement rate cannot be calculated (baseline EUI is zero).")
             else:
-                logging.warning("Warning: The baseline EUI is not available. The improvement rate cannot be calculated.")
+                logger.warning("Warning: The baseline EUI is not available. The improvement rate cannot be calculated.")
         else:
-            logging.warning("Warning: The optimal EUI simulation failed. The validation cannot be performed.")
+            logger.warning("Warning: The optimal EUI simulation failed. The validation cannot be performed.")
 
     def run_pv_analysis(self):
         """Find suitable surfaces, add PV, run simulation, and calculate net EUI."""
         if not self.config.get('pv_analysis', {}).get('enabled', False):
-            logging.info(f"--- {self.unique_id}: PV analysis is disabled ---")
+            logger.info(f"--- {self.unique_id}: PV analysis is disabled ---")
             return
         if self.optimal_eui_simulated is None and self.optimal_params is None:
-            logging.error(f"Error: Optimization or validation not completed, cannot perform PV analysis.")
+            logger.error(f"Error: Optimization or validation not completed, cannot perform PV analysis.")
             return
         if self.building_floor_area is None or self.building_floor_area <= 0:
-            logging.error(f"Error: Missing valid floor area, cannot calculate net EUI.")
+            logger.error(f"Error: Missing valid floor area, cannot calculate net EUI.")
             return
-        logging.info(f"--- {self.unique_id}: Starting PV analysis ---")
+        logger.info(f"--- {self.unique_id}: Starting PV analysis ---")
         try:
             optimized_idf_obj_path = self.work_dir / "optimized" / "optimized.idf"
             if not optimized_idf_obj_path.exists():
-                logging.error(f"Error: Verified optimized IDF not found: {optimized_idf_obj_path}")
+                logger.error(f"Error: Verified optimized IDF not found: {optimized_idf_obj_path}")
                 return
             optimized_idf_model = IDFModel(optimized_idf_obj_path) # Load the verified optimized IDF
             pv_manager = PVManager(optimized_idf_model=optimized_idf_model, runner=self.runner, config=self.config,
@@ -703,19 +1026,19 @@ class OptimizationPipeline:
                             pv_kwh_per_m2 = total_pv_kwh / self.building_floor_area # Calculate the PV generation intensity
                             self.net_eui_with_pv = self.gross_eui_with_pv - pv_kwh_per_m2 # Calculate the net EUI
                             self.optimization_improvement_with_pv = (self.baseline_eui - self.net_eui_with_pv) / self.baseline_eui * 100
-                            logging.info(f"Gross EUI with PV: {self.gross_eui_with_pv:.2f} kWh/m2")
-                            logging.info(f"Annual PV generation: {total_pv_kwh:.2f} kWh ({pv_kwh_per_m2:.2f} kWh/m2)")
-                            logging.info(f"Net source EUI (Net): {self.net_eui_with_pv:.2f} kWh/m2")
-                        else: logging.warning("Warning: Unable to obtain the total EUI with PV or PV generation data, unable to calculate the net EUI.")
+                            logger.info(f"Gross EUI with PV: {self.gross_eui_with_pv:.2f} kWh/m2")
+                            logger.info(f"Annual PV generation: {total_pv_kwh:.2f} kWh ({pv_kwh_per_m2:.2f} kWh/m2)")
+                            logger.info(f"Net source EUI (Net): {self.net_eui_with_pv:.2f} kWh/m2")
+                        else: logger.warning("Warning: Unable to obtain the total EUI with PV or PV generation data, unable to calculate the net EUI.")
                     else:
-                        logging.error(f"Error: Final PV simulation failed: {message}")
+                        logger.error(f"Error: Final PV simulation failed: {message}")
                 else:
-                    logging.error("Error: Failed to add PV to IDF.")
+                    logger.error("Error: Failed to add PV to IDF.")
             else:
-                logging.info("Info: No suitable surfaces found for PV installation. Skipping PV simulation.")
+                logger.info("Info: No suitable surfaces found for PV installation. Skipping PV simulation.")
                 self.net_eui_with_pv = self.optimal_eui_simulated
         except Exception as e:
-            logging.error(f"Error: An issue arose while executing the PV analysis: {e}")
+            logger.error(f"Error: An issue arose while executing the PV analysis: {e}")
             import traceback; traceback.print_exc()
     
     def save_results(self):
@@ -755,9 +1078,9 @@ class OptimizationPipeline:
                 return '<not serializable>'
             with open(result_file, "w") as f:
                 json.dump(results_data, f, indent=4, default=numpy_converter)
-            logging.info(f"Optimization results saved to {result_file}")
+            logger.info(f"Optimization results saved to {result_file}")
         except Exception as e:
-            logging.error(f"Error: Failed to save results to {result_file}: {e}")
+            logger.error(f"Error: Failed to save results to {result_file}: {e}")
 
     def run_full_pipeline(self, run_sens:bool=True, build_model:bool=True, run_opt=True, validate=True, run_pv=True, save=True):
         """
@@ -770,31 +1093,31 @@ class OptimizationPipeline:
             validate (bool, optional): Validate the results. Defaults to True.
             save (bool, optional): Save the results. Defaults to True.
         """
-        logging.info(f"======== Start processing: {self.unique_id} ========")
+        logger.info(f"======== Start processing: {self.unique_id} ========")
         if self.run_baseline_simulation() is None and (run_sens or validate):
-            logging.error("Error: The baseline EUI hasn't been calculated. The pipeline cannot proceed.")
+            logger.error("Error: The baseline EUI hasn't been calculated. The pipeline cannot proceed.")
             return
         
         if run_sens:
             self.run_sensitivity_analysis()
             if self.sensitivity_results is None:
-                logging.error("Error: Sensitivity analysis failed, subsequent steps may be impacted.")
+                logger.error("Error: Sensitivity analysis failed, subsequent steps may be impacted.")
         
         if build_model:
             self.build_surrogate_model()
             if self.surrogate_model is None:
-                logging.error("Error: The attempt to build a surrogate model has failed, precluding optimization and validation.")
+                logger.error("Error: The attempt to build a surrogate model has failed, precluding optimization and validation.")
 
         if run_opt:
             self.optimize()
             if self.optimization_results is None:
-                logging.error("Error: Optimization failed, preventing validation from proceeding.")
+                logger.error("Error: Optimization failed, preventing validation from proceeding.")
                 return 
         
         if validate:
             self.validate_optimum()
             if self.optimal_eui_simulated is None and run_pv:
-                logging.error("Error: Optimization validation failed, aborting PV analysis.")
+                logger.error("Error: Optimization validation failed, aborting PV analysis.")
                 return
 
         if run_pv and self.config.get('pv_analysis', {}).get('enabled', False): # Check if PV analysis is enabled in the configuration
@@ -803,4 +1126,4 @@ class OptimizationPipeline:
         if save:
             self.save_results()
         
-        logging.info(f"======== End processing: {self.unique_id} ========")
+        logger.info(f"======== End processing: {self.unique_id} ========")

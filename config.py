@@ -92,13 +92,52 @@ CONFIG = {
     # sensitivity analysis settings
     "analysis": {
         "output_intermediary_files": True,  # Output intermediary files
-        "sensitivity_samples_n": 2,  # Number of samples for Saltelli's sampling
+        "sensitivity_samples_n": 32,  # Number of samples for Saltelli's sampling
         "n_estimators": 100,  # Number of trees for Random Forest
         "random_state": 10,  # Random state for Random Forest
-        # Optimization model example: ['ols', 'rf', etc]
-        "optimization_model": 'ols',
+        "optimization_model": 'xgb', # ['ols', 'rf', 'xgb']
         "ga_population_size": 100,  # Population size for genetic algorithm
         "ga_generations": 100,  # Number of generations for genetic algorithm
+
+        "xgboost_params": {
+            "load_saved_model": True,  # Attempt to load a previously saved XGBoost model
+            # Filename for the saved model (relative to work_dir)
+            "model_save_filename": "xgboost_surrogate_model.json",
+            # Filename for best hyperparameters
+            "best_params_filename": "xgboost_best_params.json",
+
+            "use_optuna_tuning": True,  # Enable Optuna for hyperparameter tuning
+            "optuna_n_trials": 50,      # Number of Optuna trials
+            # Optuna timeout in seconds (e.g., 1 hour)
+            "optuna_timeout": 3600,
+            "optuna_cv_folds": 3,       # Number of K-Folds for Optuna's internal CV
+            # Number of parallel jobs for Optuna trials (-1 to use all processors)
+            "optuna_n_jobs": 1,
+
+            # Ratio of data for early stopping validation set in final model training
+            "validation_split_ratio": 0.2,
+            "early_stopping_rounds": 10,  # Early stopping rounds for XGBoost training
+
+            # Default fixed parameters for XGBoost (used if not tuning or as base for tuning)
+            "fixed_params": {
+                "objective": "reg:squarederror",
+                "booster": "gbtree",
+                # "random_state": 10, # Will be taken from general analysis random_state
+                # Add other fixed params like tree_method if needed
+            },
+            # Parameter space for Optuna (if use_optuna_tuning is True)
+            "optuna_param_space": {
+                "n_estimators": {"type": "int", "low": 100, "high": 1000, "step": 50},
+                "learning_rate": {"type": "float", "low": 0.005, "high": 0.2, "log": True},
+                "max_depth": {"type": "int", "low": 3, "high": 12},
+                "subsample": {"type": "float", "low": 0.6, "high": 1.0, "step": 0.1},
+                "colsample_bytree": {"type": "float", "low": 0.6, "high": 1.0, "step": 0.1},
+                "gamma": {"type": "float", "low": 0, "high": 0.5, "step": 0.05},
+                "reg_alpha": {"type": "float", "low": 1e-8, "high": 1.0, "log": True},
+                "reg_lambda": {"type": "float", "low": 1e-8, "high": 1.0, "log": True},
+                # "min_child_weight": {"type": "int", "low": 1, "high": 10}
+            }
+        }
     },
 
     # PV system settings
@@ -108,48 +147,65 @@ CONFIG = {
 
         # --- Simple PV Model (If pv_model_type == 'Simple') ---
         'simple_pv_efficiency': 0.18,       # PV Module Efficiency
-        'simple_pv_coverage': 0.8,          # PV Module Coverage on the surface (considering gaps)
+        # PV Module Coverage on the surface (considering gaps)
+        'simple_pv_coverage': 0.8,
 
         # --- Sandia PV Model (If pv_model_type == 'Sandia') ---
         # 注意: 以下 Sandia 参数是示例值，你需要为你选择的组件填充真实数据
         # 这些参数通常来自 NREL SAM 组件库或制造商数据表
         'sandia_module_params': {
-            'active_area': 1.179,             # 单个组件有效面积 (m2) - Sanyo HIP-200BA3
-            'num_cells_series': 36,          # 单个组件串联电池片数量 - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'num_cells_parallel': 1,         # 单个组件并联电池片数量 - SAND2004-3535 (B17)
-            'short_circuit_current': 4.80,    # 短路电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'open_circuit_voltage': 21.40,   # 开路电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'current_at_mpp': 4.10,           # 最大功率点电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'voltage_at_mpp': 17.10,          # 最大功率点电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'aIsc': 0.0006,                   # 短路电流的温度系数 (1/degC) - SAND2004-3535 (B17)
-            'aImp': 0.0001,                 # 最大功率点电流的温度系数 (1/degC) - SAND2004-3535 (B17)
-            'c0': 0.9604,                      #  - SAND2004-3535
-            'c1': 0.0396,                      #  - SAND2004-3535
-            'BVoc0': -0.080,                  # 开路电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'mBVoc': 0.0,                    #  - SAND2004-3535 (B19) 
-            'BVmp0': -0.083,                  # 最大功率点电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
-            'mBVmp': 0.0,                    #  - SAND2004-3535 (B19) 
+            # 单个组件有效面积 (m2) - Sanyo HIP-200BA3
+            'active_area': 1.179,
+            # 单个组件串联电池片数量 - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'num_cells_series': 36,
+            # 单个组件并联电池片数量 - SAND2004-3535 (B17)
+            'num_cells_parallel': 1,
+            # 短路电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'short_circuit_current': 4.80,
+            # 开路电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'open_circuit_voltage': 21.40,
+            # 最大功率点电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'current_at_mpp': 4.10,
+            # 最大功率点电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'voltage_at_mpp': 17.10,
+            # 短路电流的温度系数 (1/degC) - SAND2004-3535 (B17)
+            'aIsc': 0.0006,
+            # 最大功率点电流的温度系数 (1/degC) - SAND2004-3535 (B17)
+            'aImp': 0.0001,
+            'c0': 0.9604,  # - SAND2004-3535
+            'c1': 0.0396,  # - SAND2004-3535
+            # 开路电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'BVoc0': -0.080,
+            'mBVoc': 0.0,  # - SAND2004-3535 (B19)
+            # 最大功率点电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'BVmp0': -0.083,
+            'mBVmp': 0.0,  # - SAND2004-3535 (B19)
             'diode_factor': 1.217,             # 二极管因子 - SAND2004-3535 (B19)
-            'c2':  -0.40718,                       #  - SAND2004-3535 (B19) 
-            'c3': -14.0746,                      #  - SAND2004-3535 (B19) 
-            'a0': 0.918093, 'a1': 0.086255, 'a2': -0.020356, 'a3': 0.002004, 'a4': -0.000072, # IAM 参数 - De Soto (2006)多晶硅推荐值
-            'b0': 1.0, 'b1': -0.002438, 'b2': 0.003103, 'b3': -0.0001246, 'b4': 1.211e-7, 'b5': -1.36e-9, # IAM 参数 - PVsyst 默认值 / SAND2004-3535 (B17)
-            'delta_tc': 3.0,                 # NOCT 相关温度差 (deg C) - SAND2004-3535 安装方式：Open rack
-            'fd': 1.0,                       # 漫反射IAM因子 - SAND2004-3535 (B5, B17, S32, S38)
+            'c2': -0.40718,  # - SAND2004-3535 (B19)
+            'c3': -14.0746,  # - SAND2004-3535 (B19)
+            # IAM 参数 - De Soto (2006)多晶硅推荐值
+            'a0': 0.918093, 'a1': 0.086255, 'a2': -0.020356, 'a3': 0.002004, 'a4': -0.000072,
+            # IAM 参数 - PVsyst 默认值 / SAND2004-3535 (B17)
+            'b0': 1.0, 'b1': -0.002438, 'b2': 0.003103, 'b3': -0.0001246, 'b4': 1.211e-7, 'b5': -1.36e-9,
+            # NOCT 相关温度差 (deg C) - SAND2004-3535 安装方式：Open rack
+            'delta_tc': 3.0,
+            # 漫反射IAM因子 - SAND2004-3535 (B5, B17, S32, S38)
+            'fd': 1.0,
             'a': -3.56, 'b': -0.075,          # 温度模型系数 - SAND2004-3535 安装方式：Open rack
-            'c4': 0.9789, 'c5': 0.0211,          #  - SAND2004-3535 (B19)
-            'Ix0': 4.70, 'Ixx0': 4.30,         #  - 典型c-Si I-V曲线形状
-            'c6': 1.1468, 'c7': -0.1468,            #  - SAND2004-3535 (B19)
+            'c4': 0.9789, 'c5': 0.0211,  # - SAND2004-3535 (B19)
+            'Ix0': 4.70, 'Ixx0': 4.30,  # - 典型c-Si I-V曲线形状
+            'c6': 1.1468, 'c7': -0.1468,  # - SAND2004-3535 (B19)
             # --- 以下为电气连接参数，将由代码根据表面积计算模块数量来确定 ---
             # 'number_of_series_strings_in_parallel': 1, # 这个在 Generator:Photovoltaic 中
             # 'number_of_modules_in_series': 1,         # 这个在 Generator:Photovoltaic 中
             # --- 热传递模式也将在代码中设置 ---
             # 'heat_transfer_integration_mode': "Decoupled" # 或 "IntegratedSurfaceOutsideFace"
         },
-        'sandia_pv_coverage': 0.9, # 每个组件自身的有效面积与总面积比
+        'sandia_pv_coverage': 0.9,  # 每个组件自身的有效面积与总面积比
 
         # --- PVWatts Model (如果 pv_model_type == 'PVWatts') ---
-        'pvwatts_dc_system_capacity_per_sqm': 144, # 每平方米屋顶的直流容量 (W/m2) - 用于单一系统估算
+        # 每平方米屋顶的直流容量 (W/m2) - 用于单一系统估算
+        'pvwatts_dc_system_capacity_per_sqm': 144,
         'pvwatts_module_type': 'Standard',
         'pvwatts_array_type': 'FixedRoofMounted',
         'pvwatts_system_losses': 0.14,
@@ -160,7 +216,7 @@ CONFIG = {
 
         # --- 通用参数 ---
         'pv_inverter_efficiency': 0.96,      # 通用逆变器效率 (用于 Simple 和 Sandia 模型)
-        'heat_transfer_integration_mode': "Decoupled", # PV 传热集成模式
+        'heat_transfer_integration_mode': "Decoupled",  # PV 传热集成模式
 
         # --- 阴影/辐射分析参数 (保持不变) ---
         'shadow_calculation_surface_types': ['ROOF', 'WALL'],
@@ -179,8 +235,9 @@ CONFIG = {
         'feature_columns': ["city", "btype", "ssp_code", "shgc", "win_u", "nv_area", "insu", "infl", "cool_cop", "cool_air_temp", "lighting", "vt"],
         'target_column': 'eui',
         'group_by_columns': ["city", "btype", "ssp_code"],
-        'train_val_test_split': [0.8, 0.1, 0.1], # train, val, test split ratio
-        'random_state': 42,
+        # train, val, test split ratio
+        'train_val_test_split': [0.8, 0.1, 0.1],
+        'random_state': 10,
         'batch_size': 64,
         'learning_rate': 0.0001,
         'num_epochs': 500,

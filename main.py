@@ -1,5 +1,3 @@
-# TODO:使用带倾角的PV太阳能板
-
 import logging
 import sys
 import argparse
@@ -17,11 +15,13 @@ logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s - %(levelname)s - %(message)s"
                     )
 
+logger = logging.getLogger(__name__)
+
 def run_optimization(target_cities, target_ssps, target_btypes):
     """Run the standard optimization pipeline."""
-    logging.info("Starting optimization process...")
-    logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
-    logging.info(f"EnergyPlus executable path = '{CONFIG['paths']['eplus_executable']}'")
+    logger.info("Starting optimization process...")
+    logger.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
+    logger.info(f"EnergyPlus executable path = '{CONFIG['paths']['eplus_executable']}'")
 
     for city in tqdm(target_cities, desc="Cities"):
         for ssp in tqdm(target_ssps, desc="SSPs"):
@@ -33,14 +33,14 @@ def run_optimization(target_cities, target_ssps, target_btypes):
                 if any(str(ssp).lower() in str(f).lower() for f in CONFIG['paths']['ftmy_dir'].glob("*.epw")): # Need to add a city check
                     weather_file = True
             if not weather_file:
-                logging.warning(f"Warning: Weather file for city '{city}' SSP '{ssp}' not found; skipping this scenario.")
+                logger.warning(f"Warning: Weather file for city '{city}' SSP '{ssp}' not found; skipping this scenario.")
                 continue
             for btype in tqdm(target_btypes, desc="Building Types"):
                 proto_path_check = False
                 if any(btype.lower() in str(f).lower() for f in CONFIG['paths']['prototypes_dir'].glob("*.idf")):
                     proto_path_check = True
                 if not proto_path_check:
-                    logging.warning(f"Warning: Prototype file for city '{city}' SSP '{ssp}' and btype '{btype}' not found; skipping this scenario.")
+                    logger.warning(f"Warning: Prototype file for city '{city}' SSP '{ssp}' and btype '{btype}' not found; skipping this scenario.")
                     continue
                 try:
                     pipeline = OptimizationPipeline(city, ssp, btype, CONFIG)
@@ -53,30 +53,30 @@ def run_optimization(target_cities, target_ssps, target_btypes):
                         save=True
                     )
                 except FileNotFoundError as e:
-                    logging.error(f"Error: Initialization failed for {city}/{ssp}/{btype} - {e}")
+                    logger.error(f"Error: Initialization failed for {city}/{ssp}/{btype} - {e}")
                     sys.exit(1)
                 except Exception as e:
-                    logging.error(f"Error occurred for {city}/{ssp}/{btype} - {e}")
+                    logger.error(f"Error occurred for {city}/{ssp}/{btype} - {e}")
 
-    logging.info("Optimization process completed successfully.")
+    logger.info("Optimization process completed successfully.")
 
 def collect_eui_data(target_cities, target_ssps, target_btypes):
     """Collect EUI data for training the prediction model."""
-    logging.info("Starting EUI data collection...")
+    logger.info("Starting EUI data collection...")
     
     data_pipeline = EUIDataPipeline(CONFIG)
     
     try:
         training_data = data_pipeline.prepare_training_data(target_cities, target_ssps, target_btypes)
-        logging.info(f"Collected {len(training_data)} training samples.")
+        logger.info(f"Collected {len(training_data)} training samples.")
     except Exception as e:
-        logging.error(f"Error occurred during EUI data collection - {e}")
+        logger.error(f"Error occurred during EUI data collection - {e}")
         
-    logging.info("EUI data collection completed successfully.")
+    logger.info("EUI data collection completed successfully.")
 
 def train_eui_model():
     """Train the EUI prediction model."""
-    logging.info("Starting EUI model training...")
+    logger.info("Starting EUI model training...")
     
     model_service = ModelService(CONFIG)
     prediction_service = EUIPredictionService(CONFIG)
@@ -88,16 +88,16 @@ def train_eui_model():
             data,
             model_service
             )
-        logging.info("Model training completed successfully.")
+        logger.info("Model training completed successfully.")
     except Exception as e:
-        logging.error(f"Error occurred during EUI model training - {e}")
+        logger.error(f"Error occurred during EUI model training - {e}")
         
-    logging.info("EUI model training completed successfully.")
+    logger.info("EUI model training completed successfully.")
 
 def predict_eui(city, ssp, btype):
     """Predict EUI for a specific building type."""
        
-    logging.info(f"Predicting EUI for {city}/{ssp}/{btype}...")
+    logger.info(f"Predicting EUI for {city}/{ssp}/{btype}...")
     
     prediction_service = EUIPredictionService(CONFIG)
     
@@ -113,10 +113,10 @@ def predict_eui(city, ssp, btype):
         }
         
         eui = prediction_service.predict_eui(building_data)
-        logging.info(f"Predicted EUI for {city}/{ssp}/{btype}: {eui}")
+        logger.info(f"Predicted EUI for {city}/{ssp}/{btype}: {eui}")
         return eui
     except Exception as e:
-        logging.error(f"Error occurred during EUI prediction - {e}")
+        logger.error(f"Error occurred during EUI prediction - {e}")
         return None
 
 def main():
@@ -151,7 +151,7 @@ def main():
         train_eui_model()
     elif args.mode == 'predict':
         if not all([args.city, args.ssp, args.btype]):
-            logging.error("City, SSP, and building type must be specified for prediction mode.")
+            logger.error("City, SSP, and building type must be specified for prediction mode.")
             sys.exit(1)
         predict_eui(args.city, args.ssp, args.btype)
     elif args.mode == 'analyze':
