@@ -42,7 +42,7 @@ class OptimizationPipeline:
         self.weather_path = self._find_weather_file() # Path to the weather file
 
         # WorkDirectory Configuration
-        self.work_dir = self.config['paths']['results_dir'] / 'Temp' / self.unique_id
+        self.work_dir = self.config['paths']['epsim_dir'] / self.unique_id
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize Simulation Components

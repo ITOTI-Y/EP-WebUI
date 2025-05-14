@@ -1,0 +1,3699 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+4. Repository files, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: backend/, main.py, config.py
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+<additional_info>
+
+</additional_info>
+
+</file_summary>
+
+<directory_structure>
+backend/services/__init__.py
+backend/services/data_analysis_services.py
+backend/services/eui_data_pipeline.py
+backend/services/eui_dataset_service.py
+backend/services/eui_prediction_service.py
+backend/services/idf_service.py
+backend/services/model_service.py
+backend/services/optimization_service.py
+backend/services/pv_service.py
+backend/services/simulation_service.py
+backend/services/supabase_service.py
+config.py
+main.py
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="backend/services/data_analysis_services.py">
+import pandas as pd
+import json
+from pathlib import Path
+from config import CONFIG
+
+def data_analysis():
+    data_dir = CONFIG['paths']['epsim_dir']
+    eui_data_dir = CONFIG['paths']['eui_data_dir']
+    json_list = data_dir.rglob("pipeline_results.json")
+
+    method_list = ['OLS', 'RandomForest']
+
+    columns = ['city','btype', 'ssp','building_floor_area_m2', 'baseline_eui',
+                            'optimal_eui_simulated', 'optimal_eui_predicted', 'optimization_improvement_percent',
+                            'optimization_bias_percent', 'gross_eui_with_pv',
+                            'net_eui_with_pv', 'optimization_improvement_with_pv', 
+                            ]
+
+    params = ['shgc', 'win_u', 'nv_area', 'insu', 'infl', 'cool_cop', 'cool_air_temp', 'lighting', 'vt']
+
+    df = pd.DataFrame(columns=columns)
+
+    data_list = []
+
+    for json_file in json_list:
+        with open(json_file, "r") as f:
+            data = json.load(f)
+            columns_data = [data[i] for i in columns]
+            params_data = [data['optimal_params'][i] for i in params]
+            data_list.append([json_file.parents[1].name] + columns_data + params_data)
+
+    all_columns =['method'] + columns + params
+    df = pd.DataFrame(data_list, columns=all_columns)
+
+    df.to_csv(eui_data_dir / "data_analysis.csv", index=False)
+</file>
+
+<file path="backend/services/eui_dataset_service.py">
+import torch
+import logging
+from torch.utils.data import Dataset, DataLoader, Subset
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from pathlib import Path
+import json
+import pandas as pd
+import numpy as np
+import joblib
+
+
+class EUIDataset(Dataset):
+    """
+    PyTorch Dataset for EUI prediction data.
+
+    Handles label encoding, stratified splitting (using indices),
+    and provides DataLoaders for train, validation, and test sets.
+    """
+
+    def __init__(self, training_data: pd.DataFrame, config: dict):
+        """
+        Initializes the dataset.
+
+        Args:
+            training_data (pd.DataFrame): The raw training data.
+            config (dict): Configuration dictionary containing parameters like
+                           feature columns, target column, split ratios, etc.
+        """
+        self.config = config
+        self.df_data = training_data.copy()
+        self.feature_columns = config['eui_prediction']['feature_columns']
+        self.target_column = config['eui_prediction']['target_column']
+        self.stratify_columns = config['eui_prediction']['group_by_columns']
+        self.mapping_dict = {}
+        self._label_encode()
+        self._stratified_split()
+        self._prepare_data()
+        logging.info(
+            f"Initializing EUIDataset with {len(self.all_features)} samples and {len(self.all_labels)} labels.")
+
+    def __len__(self):
+        """Returns the total number of samples in the dataset."""
+        return len(self.all_features)
+
+    def __getitem__(self, idx):
+        """
+        Retrieves the feature and label tensors for a given index.
+
+        Args:
+            idx (int): The index of the sample to retrieve.
+
+        Returns:
+            tuple: (feature_tensor, label_tensor)
+        """
+        return self.all_features[idx], self.all_labels[idx]
+
+    def _label_encode(self):
+        label_encoder = LabelEncoder()
+        string_columns = self.df_data.select_dtypes(
+            include=['object', 'category']).columns
+        for column in string_columns:
+            self.df_data[column] = label_encoder.fit_transform(
+                self.df_data[column])
+            self.mapping_dict[column] = dict(
+                zip([i if isinstance(i, (str)) else i.item() for i in label_encoder.classes_], 
+                    [i if isinstance(i, (str)) else i.item() for i in label_encoder.transform(label_encoder.classes_)]))
+        logging.info(f"Label encoded columns: {list(string_columns)}")
+        model_dir = Path(self.config['paths']['results_dir']) / 'EUI_Models' # Keep consistent with EUIPredictionService
+        model_dir.mkdir(parents=True, exist_ok=True) # Ensure directory exists
+        mapping_path = model_dir / 'label_encoding_maps.json'
+        try:
+            with open(mapping_path, 'w') as f:
+                json.dump(self.mapping_dict, f, indent=4) # indent Parameter (Optional), make JSON file more readable
+            logging.info(f"Label encoding mappings saved to {mapping_path}")
+        except Exception as e:
+            logging.error(f"Error saving label encoding mappings: {e}")
+
+    def _stratified_split(self):
+        split_ratios = self.config['eui_prediction']['train_val_test_split']
+        random_state = self.config['eui_prediction']['random_state']
+        assert abs(sum(split_ratios) - 1.0 ) < 1e-6, "The sum of train_val_test_split must be 1."
+        str_df = self.df_data[self.stratify_columns]
+        str_df['stratify_key'] = ""
+        for i, column in enumerate(self.stratify_columns):
+            str_df['stratify_key'] += self.df_data[column].astype(str)
+            if i < len(self.stratify_columns) - 1:
+                str_df['stratify_key'] += "_"
+
+        indices = np.arange(len(self.df_data))
+
+        train_indices, temp_indices = train_test_split(indices, test_size=split_ratios[1] + split_ratios[2],
+                                             stratify=str_df['stratify_key'], random_state=random_state)
+        
+        temp_stratify = str_df.loc[temp_indices]['stratify_key']
+
+        test_indices, val_indices = train_test_split(temp_indices, test_size=split_ratios[2]/(split_ratios[1] + split_ratios[2]),
+                                           stratify=temp_stratify,
+                                           random_state=random_state)
+
+        self.train_indices = train_indices
+        self.val_indices = val_indices
+        self.test_indices = test_indices
+
+    def _prepare_data(self):
+        target_column = self.config['eui_prediction']['target_column']
+        feature_columns = self.config['eui_prediction']['feature_columns']
+
+        self.scaler = None
+        self.scaler_columns = []
+
+        if self.config['eui_prediction'].get('scale_features', False):
+            from sklearn.preprocessing import StandardScaler
+            numeric_cols_to_scale = self.df_data[feature_columns].select_dtypes(include=[np.number]).columns
+            self.scaled_columns = list(numeric_cols_to_scale)
+
+            if len(self.scaled_columns) > 0:
+                scaler = StandardScaler()
+                # Only fit on training data
+                scaler.fit(self.df_data.loc[self.train_indices][self.scaled_columns])
+
+                self.df_data[self.scaled_columns] = scaler.transform(self.df_data[self.scaled_columns])
+                logging.info(f"Applied StandardScaler to columns: {self.scaled_columns}")
+                self.scaler = scaler
+
+                model_dir = self.config['paths']['eui_models_dir']
+                model_dir.mkdir(parents=True, exist_ok=True)
+                scaler_path = model_dir / 'scaler.joblib'
+
+                try:
+                    joblib.dump(self.scaler, scaler_path)
+                    logging.info(f"Scaler saved to {scaler_path}")
+                    scaled_columns_path = model_dir / 'scaled_columns.json'
+                    with open(scaled_columns_path, 'w') as f:
+                        json.dump(self.scaled_columns, f)
+                    logging.info(f"Scaled column names saved to {scaled_columns_path}")
+                except Exception as e:
+                    logging.error(f"Error saving scaler or column names: {e}")
+
+        features_np = self.df_data[feature_columns].values.astype(np.float32)
+        labels_np = self.df_data[target_column].values.astype(np.float32)
+        self.all_features = torch.from_numpy(features_np)
+        self.all_labels = torch.from_numpy(labels_np).unsqueeze(1)
+
+    def get_dataloader(self, indices: np.ndarray, batch_size: int = None, shuffle: bool = True, num_workers: int = 0) -> DataLoader:
+        """Helper function to create a DataLoader for a given set of indices."""
+        if batch_size is None:
+            batch_size = self.config['eui_prediction']['batch_size']
+        subset = Subset(self, indices)
+        dataloader = DataLoader(subset, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers)
+        return dataloader
+    
+
+    def get_train_data(self, batch_size: int = None, shuffle: bool = True, num_workers: int = 0):
+        """Returns a DataLoader for the training set."""
+        return self.get_dataloader(self.train_indices, batch_size, shuffle=shuffle, num_workers=num_workers)
+
+    def get_val_data(self, batch_size: int = None, shuffle: bool = False, num_workers: int = 0):
+        """Returns a DataLoader for the validation set."""
+        return self.get_dataloader(self.val_indices, batch_size, shuffle=shuffle, num_workers=num_workers)
+
+    def get_test_data(self, batch_size: int = None, shuffle: bool = False, num_workers: int = 0):
+        """Returns a DataLoader for the test set."""
+        return self.get_dataloader(self.test_indices, batch_size, shuffle=shuffle, num_workers=num_workers)
+</file>
+
+<file path="backend/services/__init__.py">
+
+</file>
+
+<file path="backend/services/eui_prediction_service.py">
+"""Service for EUI prediction using Graph Neural Networks."""
+
+import torch
+import pandas as pd
+import logging
+from pathlib import Path
+from typing import Dict, List, Tuple, Any
+from backend.services.eui_dataset_service import EUIDataset
+from backend.services.model_service import ModelService
+
+class EUIPredictionService:
+    """
+    Service for training and using Neural Network models for EUI prediction.
+    """
+    
+    def __init__(self, config: dict):
+        """
+        Initialize the EUI prediction service.
+        
+        Args:
+            config (dict): Configuration dictionary
+        """
+        self.config = config
+        self.model_dir = config['paths']['eui_models_dir']
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.device = config['eui_prediction']['device']
+
+    def train_model(self, data: pd.DataFrame, model_service: ModelService):
+        dataset = EUIDataset(data, self.config)
+        train_loader = dataset.get_train_data()
+        val_loader = dataset.get_val_data()
+        test_loader = dataset.get_test_data()
+
+        model = model_service.get_model(len(self.config['eui_prediction']['feature_columns']))
+        model = model.to(self.device)
+        loss_fn = model_service.get_loss_fn()
+        optimizer = model_service.get_optimizer(model)
+
+        for epoch in range(self.config['eui_prediction']['num_epochs']):
+            model.train()
+            for batch_features, batch_labels in train_loader:
+                batch_features = batch_features.to(self.device)
+                batch_labels = batch_labels.to(self.device)
+                optimizer.zero_grad()
+                outputs = model(batch_features)
+                loss = loss_fn(outputs, batch_labels)
+                loss.backward()
+                optimizer.step()
+            logging.info(f"Epoch {epoch+1} loss: {loss.item()}")
+
+        pass
+
+    def _load_artifacts(self):
+        """Loads the trained model, scaler, and scaled columns list."""
+        scaler_path = self.model_dir / 'scaler.joblib'
+        scaled_columns_path = self.model_dir / 'scaled_columns.json'
+        mapping_dict_path = self.model_dir / 'label_encoding_maps.json'
+
+    def _build_dataset(self):
+        pass
+</file>
+
+<file path="backend/services/supabase_service.py">
+import os
+import pandas as pd
+from supabase import create_client, Client
+from dotenv import load_dotenv
+from pathlib import Path
+import logging
+import asyncio
+
+# --- Logging Configuration (Global) ---
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Load Environment Variables (Done before class instantiation) ---
+load_dotenv()
+
+class SensitivityDataUploader:
+    """
+    Handles connecting to Supabase, finding sensitivity CSV files,
+    processing them, and uploading the data.
+    """
+
+    def __init__(self, url: str | None = None, key: str | None = None, table: str | None = None, root_dir: str | None = None, config: dict | None = None):
+        """
+        Initializes the uploader with necessary configurations.
+
+        Args:
+            url (str): Supabase project URL.
+            key (str): Supabase service key (or anon key depending on RLS).
+            table (str): Name of the Supabase table to upload data to.
+            root_dir (str): The root directory to search for CSV files.
+        """
+        if config:
+            self.url = config['supabase']['url']
+            self.key = config['supabase']['key']
+            self.table = config['supabase']['table']
+            self.root_dir = config['paths']['epsim_dir']
+        else:
+            self.url = url
+            self.key = key
+            self.table = table
+            self.root_dir = root_dir
+
+        if not self.url or not self.key:
+            raise ValueError("Supabase URL and Key must be provided.")
+        if not self.table:
+            raise ValueError("Supabase table name must be provided.")
+
+
+        self.supabase: Client | None = None  # Initialize supabase client as None
+
+        logging.info(
+            f"Uploader initialized for table '{self.table}' in directory '{self.root_dir}'")
+
+    async def connect(self):
+        """Establishes connection to the Supabase database."""
+        if self.supabase:
+            logging.info("Already connected to Supabase.")
+            return True
+        try:
+            self.supabase = create_client(self.url, self.key)
+            # You might want a simple check here, like listing tables (if permissions allow)
+            # or just assume connection is okay if no exception is raised.
+            # Example check (requires admin rights or specific select grants):
+            # await asyncio.to_thread(self.supabase.table(self.table).select('id', count='exact').limit(0).execute)
+            logging.info("Successfully connected to Supabase.")
+            return True
+        except Exception as e:
+            logging.error(f"Error connecting to Supabase: {e}")
+            self.supabase = None  # Ensure client is None on failure
+            return False
+
+    async def extract_metadata(self) -> dict:
+        """
+        Extracts metadata from the file paths within the specified root directory.
+
+        Returns:
+            dict: A dictionary where keys are file paths (str) and values are
+                  dictionaries containing extracted metadata ('method', 'city', etc.)
+                  and the Path object ('file_path').
+        """
+        root_path = Path(self.root_dir)
+        if not root_path.is_dir():
+            logging.error(
+                f"Error: Root directory '{self.root_dir}' not found or is not a directory.")
+            return {}
+
+        paths_dict = {}
+        try:
+            # Use the specific filename pattern
+            paths = list(root_path.rglob(
+                "**/sensitivity_discrete_results.csv"))
+            logging.info(
+                f"Found {len(paths)} sensitivity_discrete_results.csv files in '{self.root_dir}'.")
+        except Exception as e:
+            logging.error(f"Error searching for files in {root_path}: {e}")
+            return {}
+
+        for path in paths:
+            try:
+                # Assumes structure: root_dir / method / city_btype_ssp / sensitivity_discrete_results.csv
+                city, btype, ssp = path.parent.name.split("_")
+                paths_dict[str(path)] = {
+                    "city": city,
+                    "btype": btype,
+                    "ssp_code": ssp,
+                    "file_path": path  # Store the Path object for reading
+                }
+            except (IndexError, ValueError) as e:
+                logging.warning(
+                    f"Could not extract metadata from path {path}: {e}. Check directory structure. Skipping.")
+            except Exception as e:
+                logging.error(
+                    f"Unexpected error processing path {path}: {e}. Skipping.")
+        return paths_dict
+
+    async def _process_and_upload_file(self, file_name: str, file_info: dict) -> int:
+        """
+        Processes a single CSV file and uploads its data to Supabase.
+        Internal helper method.
+
+        Args:
+            file_name (str): The string representation of the file path (for logging).
+            file_info (dict): Dictionary containing metadata and the 'file_path' Path object.
+
+        Returns:
+            int: The number of rows successfully processed and potentially uploaded.
+                 Returns 0 if the file is skipped or an error occurs during upload.
+        """
+        if not self.supabase:
+            logging.error("Supabase client not connected. Cannot upload.")
+            return 0
+
+        logging.info(f"Processing File: {file_name}")
+        file_path = file_info["file_path"]
+        try:
+            df = pd.read_csv(file_path)
+            if df.empty:
+                logging.warning(f"File {file_name} is empty. Skipping...")
+                return 0
+
+            # Add metadata columns
+            for key, value in file_info.items():
+                if key != "file_path":  # Don't add the Path object itself as a column
+                    df[key] = value.upper()
+
+            # Convert specific columns to nullable integer type
+            int_columns = ['insu', 'cool_air_temp', 'lighting']
+            for col in int_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(
+                        df[col], errors='coerce').astype(pd.Int64Dtype())
+                else:
+                    logging.warning(
+                        f"Column '{col}' not found in {file_name}. Skipping conversion for this column.")
+
+            # Prepare data and upsert
+            data_to_insert = df.to_dict(orient='records')
+            # Define conflict columns dynamically based on DataFrame columns excluding 'eui'
+            conflict_columns = [col for col in df.columns if col != 'eui']
+            if not conflict_columns:
+                logging.error(
+                    f"No conflict columns identified for upsert in file {file_name} (excluding 'eui'). Check columns. Skipping upload.")
+                return 0
+
+            logging.debug(
+                f"Upserting {len(data_to_insert)} rows from {file_name} with conflict columns: {conflict_columns}")
+
+            # Run synchronous Supabase call in a separate thread
+            response = await asyncio.to_thread(
+                self.supabase.table(self.table).upsert(
+                    data_to_insert,
+                    on_conflict=','.join(conflict_columns)
+                ).execute
+            )
+
+            # Check response (Supabase-py v2+ returns APIResponse)
+            if response.data:
+                # Assuming response.data contains the upserted rows
+                num_rows = len(response.data)
+                logging.info(
+                    f"Successfully uploaded/updated {num_rows} rows from {file_name} to table '{self.table}'.")
+                return num_rows
+            # Handle potential errors indicated in the response
+            elif hasattr(response, 'error') and response.error:
+                logging.error(
+                    f"Error uploading data from {file_name} to Supabase: {response.error}")
+                return 0
+            elif response.status_code >= 400:  # Check HTTP status code for errors
+                logging.error(
+                    f"Error uploading data from {file_name}. Status: {response.status_code}, Response: {getattr(response, 'json', lambda: {})() or str(response)}")
+                return 0
+            else:
+                # This case might occur if upsert affected 0 rows but wasn't an "error" per se
+                logging.warning(
+                    f"Upload from {file_name} completed but response indicates no data was returned or modified. Status: {response.status_code}")
+                return 0  # Count as 0 rows uploaded in this ambiguous case
+
+        except FileNotFoundError:
+            logging.error(
+                f"File not found during processing: {file_path}. Skipping.")
+            return 0
+        except pd.errors.EmptyDataError:
+            logging.warning(
+                f"File {file_name} is empty or unreadable (pandas EmptyDataError). Skipping.")
+            return 0
+        except Exception as e:
+            logging.error(
+                f"Error processing or uploading file {file_name}: {e}")
+            return 0
+
+    async def process_and_upload(self):
+        """
+        Finds CSV files, extracts metadata, and concurrently processes and uploads them.
+        """
+        if not self.supabase:
+            logging.error(
+                "Cannot process and upload without a Supabase connection.")
+            return
+
+        paths_dict = await self.extract_metadata()
+        if not paths_dict:
+            logging.warning("No files matching the pattern found to process.")
+            return
+
+        logging.info(
+            f"Starting concurrent processing for {len(paths_dict)} files...")
+
+        # Create tasks for concurrent execution
+        tasks = [
+            self._process_and_upload_file(file_name, file_info)
+            for file_name, file_info in paths_dict.items()
+        ]
+
+        # Run tasks concurrently and gather results
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        total_rows_uploaded = 0
+        successful_files = 0
+        failed_files = 0
+
+        # Process results
+        for i, result in enumerate(results):
+            # Get corresponding filename
+            file_name = list(paths_dict.keys())[i]
+            if isinstance(result, Exception):
+                logging.error(
+                    f"Task for file {file_name} failed with an unhandled exception: {result}")
+                failed_files += 1
+            elif isinstance(result, int):
+                if result > 0:
+                    total_rows_uploaded += result
+                    successful_files += 1
+                else:  # result is 0, indicating skipped file or upload error handled within the task
+                    # The specific error/warning was already logged inside _process_and_upload_file
+                    failed_files += 1
+            else:
+                logging.error(
+                    f"Task for file {file_name} returned an unexpected result type: {type(result)}")
+                failed_files += 1
+
+        logging.info(f"Finished processing all files.")
+        logging.info(
+            f"Successfully processed and uploaded data from {successful_files} files.")
+        if failed_files > 0:
+            logging.warning(
+                f"Failed to process or upload data from {failed_files} files (check logs for details).")
+        logging.info(
+            f"Total rows uploaded/updated across all files: {total_rows_uploaded}")
+
+    async def run(self):
+        """Connects to Supabase and runs the full processing and upload pipeline."""
+        if await self.connect():
+            await self.process_and_upload()
+        else:
+            logging.error("Aborting run due to failed Supabase connection.")
+
+
+# --- Main Execution Block ---
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, str(Path(__file__).parents[2]))
+    from config import CONFIG
+
+    SUPABASE_URL = CONFIG['supabase']['url']
+    SUPABASE_KEY = CONFIG['supabase']['key']
+    SUPABASE_TABLE = CONFIG['supabase']['table']
+    ROOT_DIR = CONFIG['paths']['epsim_dir']
+
+    # 1. Perform Environment Variable Checks Early
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        logging.error(
+            "Error: SUPABASE_URL or SUPABASE_KEY not set in environment variables or .env file. Exiting.")
+        exit(1)
+    if not SUPABASE_TABLE:
+        logging.error(
+            "Error: SUPABASE_TABLE not set in environment variables or .env file. Exiting.")
+        exit(1)
+
+    # 2. Instantiate the Uploader
+    try:
+        uploader = SensitivityDataUploader(
+            url=SUPABASE_URL,
+            key=SUPABASE_KEY,
+            table=SUPABASE_TABLE,
+            root_dir=ROOT_DIR,
+        )
+    except ValueError as e:
+        logging.error(f"Error initializing uploader: {e}")
+        exit(1)
+
+    # 3. Run the Uploader's Main Process
+    asyncio.run(uploader.run())
+</file>
+
+<file path="backend/services/eui_data_pipeline.py">
+"""Data pipeline for collecting and organizing EUI simulation results."""
+
+import json
+import logging
+import pandas as pd
+from pathlib import Path
+from typing import List, Dict, Any, Optional
+from supabase import create_client, Client
+
+
+class EUIDataPipeline:
+    """
+    Manages the collection (via Azure) and preparation (from Supabase)
+    of EUI simulation data.
+    """
+
+    def __init__(self, config: dict):
+        """
+        Initialize the EUI data pipeline.
+
+        Args:
+            config (dict): Configuration dictionary containing paths, Azure settings,
+                           and Supabase connection details (e.g., under a 'supabase' key).
+                           Expected Supabase keys: 'url', 'key', 'table'.
+        """
+        self.config = config
+
+        # --- 本地结果目录 ---
+        self.results_dir = Path(
+            config['paths']['results_dir']) / 'EUI_Data'  # 确保路径存在
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+
+        # --- Supabase 配置 ---
+        self.supabase_url: Optional[str] = config.get(
+            'supabase', {}).get('url')
+        self.supabase_key: Optional[str] = config.get(
+            'supabase', {}).get('key')
+        self.supabase_table: Optional[str] = config.get(
+            'supabase', {}).get('table')
+        self.supabase: Optional[Client] = None  # Supabase 客户端
+
+        if not all([self.supabase_url, self.supabase_key, self.supabase_table]):
+            logging.warning("Supabase URL, Key, or Table not fully configured. "
+                            "Data fetching from Supabase will not be possible.")
+        else:
+            self._connect_supabase()  # 尝试在初始化时连接
+
+    def _connect_supabase(self):
+        """尝试连接到 Supabase 数据库。"""
+        if not self.supabase_url or not self.supabase_key:
+            logging.error("Supabase URL or Key is missing, cannot connect.")
+            return False
+        if self.supabase:
+            logging.debug("Already connected to Supabase.")
+            return True
+        try:
+            logging.info(f"Connecting to Supabase at {self.supabase_url}...")
+            self.supabase = create_client(self.supabase_url, self.supabase_key)
+            # 可以添加一个简单的测试查询来验证连接
+            self.supabase.table(self.supabase_table).select('id', count='exact').limit(0).execute()
+            logging.info("Successfully connected to Supabase.")
+            return True
+        except Exception as e:
+            logging.error(f"Error connecting to Supabase: {e}")
+            self.supabase = None  # 确保连接失败时客户端为 None
+            return False
+
+    def prepare_training_data(self, cities: List[str], ssps: List[int], btypes: List[str]) -> pd.DataFrame:
+        """
+        从 Supabase 数据库准备（获取）用于神经网络模型的训练数据。
+
+        Args:
+            cities (List[str]): 需要包含的城市列表。
+            ssps (List[int]): 需要包含的 SSP 场景列表 (应与 Supabase 表中的 ssp 列匹配)。
+                               假设 Supabase 中的列名为 'ssp_code' 或 'ssp'。
+            btypes (List[str]): 需要包含的建筑类型列表。
+
+        Returns:
+            pd.DataFrame: 从 Supabase 获取并组合的训练数据。如果出错或未找到数据，则返回空 DataFrame。
+        """
+        if not self.supabase:
+            logging.error(
+                "Supabase client is not connected. Cannot prepare training data.")
+            # 尝试重新连接
+            if not self._connect_supabase():
+                return pd.DataFrame()  # 如果连接失败，返回空 DataFrame
+
+        if not self.supabase_table:
+            logging.error("Supabase table name is not configured.")
+            return pd.DataFrame()
+
+        logging.info(
+            f"Preparing training data from Supabase table '{self.supabase_table}'...")
+        logging.info(
+            f"Filters: cities={cities}, ssps={ssps}, btypes={btypes}")
+
+        try:
+            all_data = []
+            page_size = 1000  # 每次获取的行数，通常设为默认值或 Supabase 的 max_rows
+            current_page = 0
+            fetched_count_last_page = page_size # 用于控制循环
+
+            logging.info(f"Starting paginated fetch from Supabase (page size: {page_size})...")
+
+            while fetched_count_last_page == page_size: # 只有当上一页获取满了才可能需要获取下一页
+                start_row = current_page * page_size
+                end_row = start_row + page_size - 1
+                logging.debug(f"Fetching page {current_page + 1} (rows {start_row}-{end_row})...")
+
+                # 重新构建基础查询或确保过滤器在分页前应用
+                query_builder = self.supabase.table(self.supabase_table).select("*")
+
+                # 应用你的过滤器
+                if cities:
+                    query_cities = [city.upper() for city in cities]
+                    query_builder = query_builder.in_('city', query_cities)
+                if ssps:
+                    query_ssps = [ssp for ssp in ssps]
+                    query_builder = query_builder.in_('ssp_code', query_ssps) # 确认列名是 ssp_code
+                if btypes:
+                    query_btypes = [btype.upper() for btype in btypes]
+                    query_builder = query_builder.in_('btype', query_btypes)
+
+                # 应用分页
+                response = query_builder.range(start_row, end_row).execute()
+
+                if hasattr(response, 'data') and response.data:
+                    page_data = response.data
+                    fetched_count_last_page = len(page_data)
+                    all_data.extend(page_data)
+                    logging.debug(f"Fetched {fetched_count_last_page} records for this page.")
+                    # 如果获取到的记录数小于页面大小，说明这是最后一页了
+                    if fetched_count_last_page < page_size:
+                        break
+                    current_page += 1 # 准备获取下一页
+                elif hasattr(response, 'error') and response.error:
+                    logging.error(f"Error fetching data from Supabase on page {current_page + 1}: {response.error}")
+                    fetched_count_last_page = 0 # 出错时终止循环
+                else:
+                    # 没有数据或意外响应
+                    logging.warning(f"No data or unexpected response on page {current_page + 1}. Stopping fetch.")
+                    fetched_count_last_page = 0 # 终止循环
+
+
+            combined_df = pd.DataFrame(all_data).drop(columns=['created_at'])
+            logging.info(
+                f"Successfully fetched {len(combined_df)} records from Supabase.")
+
+            output_file = self.results_dir / "training_data_from_database.csv"
+            combined_df.to_csv(output_file, index=False)
+            logging.info(f"Saved fetched training data to {output_file}")
+
+            return combined_df
+
+        except Exception as e:
+            logging.error(
+                f"An unexpected error occurred while querying Supabase: {e}")
+            # 可以考虑记录更详细的堆栈跟踪信息
+            # import traceback
+            # logging.error(traceback.format_exc())
+            return pd.DataFrame()  # 发生异常，返回空 DataFrame
+
+    def load_data(self) -> pd.DataFrame:
+        """
+        从本地文件加载已准备好的训练数据。
+
+        Args:
+            source (str): 指定数据来源的文件名后缀，例如 "supabase" 或 "azure"。
+                          默认为 "supabase"，对应 `prepare_training_data` 保存的文件。
+
+        Returns:
+            pd.DataFrame: 加载的训练数据。
+
+        Raises:
+            FileNotFoundError: 如果对应的本地训练数据文件不存在。
+        """
+        data_filename = "training_data_from_database.csv"
+
+        data_file = self.results_dir / data_filename
+
+        if not data_file.exists():
+            raise FileNotFoundError(f"Data file '{data_file}' not found. "
+                                    f"Run prepare_training_data (for Supabase) or ensure '{data_filename}' data exists.")
+
+        logging.info(f"Loading Data from {data_file}")
+        return pd.read_csv(data_file)
+</file>
+
+<file path="backend/services/model_service.py">
+# TODO: 考虑不同模型的拟合效果
+import torch
+from torch import nn
+
+class ModelService:
+    def __init__(self, config: dict):
+        self.config = config
+        self.model_dir = config['paths']['eui_models_dir']
+
+    def get_optimizer(self, model: torch.nn.Module):
+        return torch.optim.Adam(model.parameters(), lr=self.config['eui_prediction']['learning_rate'])
+
+    def get_loss_fn(self):
+        return nn.MSELoss()
+
+    def get_model(self, input_dim: int):
+        return RegressionNet(input_dim=input_dim)
+
+class RegressionNet(torch.nn.Module):
+    def __init__(self, input_dim: int):
+        super(RegressionNet, self).__init__()
+
+        self.layer_1 = nn.Linear(input_dim, 256)
+        self.bn_1 = nn.BatchNorm1d(256)
+        self.relu_1 = nn.ReLU()
+        self.dropout_1 = nn.Dropout(0.2)
+
+        self.layer_2 = nn.Linear(256, 128)
+        self.bn_2 = nn.BatchNorm1d(128)
+        self.relu_2 = nn.ReLU()
+        self.dropout_2 = nn.Dropout(0.2)
+
+        self.layer_3 = nn.Linear(128, 64)
+        self.bn_3 = nn.BatchNorm1d(64)
+        self.relu_3 = nn.ReLU()
+
+
+        self.output_layer = nn.Linear(64, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.layer_1(x)
+        x = self.bn_1(x)
+        x = self.relu_1(x)
+        x = self.dropout_1(x)
+        x = self.layer_2(x)
+        x = self.bn_2(x)
+        x = self.relu_2(x)
+        x = self.dropout_2(x)
+        x = self.layer_3(x)
+        x = self.bn_3(x)
+        x = self.relu_3(x)
+        x = self.output_layer(x)
+        return x
+</file>
+
+<file path="backend/services/simulation_service.py">
+import os
+import time
+import subprocess
+import pandas as pd
+import shutil
+import logging
+from eppy.modeleditor import IDF
+from eppy.runner.run_functions import runIDFs, run
+
+class EnergyPlusRunner:
+    """
+    Encapsulate the execution of EnergyPlus simulation
+    """
+
+    def __init__(self, eplus_executable_path: str = None):
+        """
+        Initialize the EnergyPlusRunner
+
+        Args:
+            eplus_executable_path (str, optional): Path to the EnergyPlus executable. Defaults to None.
+        """
+        self.eplus_path = eplus_executable_path
+
+        if self.eplus_path is None:
+            logging.warning("EnergyPlus executable path not provided. eppy will attempt to locate it automatically.")
+        elif not os.path.exists(self.eplus_path):
+            raise FileNotFoundError(f"EnergyPlus executable not found at {self.eplus_path}")
+        
+    def run_simulation(self, idf_path: str, weather_path:str, output_dir:str, output_prefix:str=None, output_suffix:str='C', cleanup:bool=True, config:str=None):
+        """
+        Run an EnergyPlus simulation
+
+        Args:
+            idf_path (str): Path to the IDF file
+            weather_path (str): Path to the weather file
+            output_dir (str): Directory to store the output files
+            output_prefix (str, optional): Prefix for the output files. Defaults to None.
+            output_suffix (str, optional): Suffix for the output files. Defaults to 'C'.
+            cleanup (bool, optional): Whether to clean up the output files after the simulation is run. Defaults to True.
+            config (str, optional): Path to the EnergyPlus configuration file. Defaults to None.
+
+        Returns:
+            tuple: (success: bool, message: str) Simulation Status and Message
+        """
+
+        # Check input files and directories
+        if not os.path.exists(idf_path):
+            return False, f"IDF file not found at {idf_path}"
+        
+        if not os.path.exists(weather_path):
+            return False, f"Weather file not found at {weather_path}"
+        
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Determine the run name
+        run_name = output_prefix if output_prefix else os.path.splitext(os.path.basename(idf_path))[0]
+
+        # Load the IDF file
+        try:
+            # IDF.setiddname(self.eplus_path) # setting the IDD file path (if needed)
+            idf_object = IDF(idf_path)
+        except Exception as e:
+            return False, f"Error loading IDF file: {e} with path {idf_path}"
+
+        logging.info(f"Start running EnergyPlus simulation: IDF='{os.path.basename(idf_path)}', EPW='{os.path.basename(weather_path)}', Output='{output_dir}' ")
+        start_time = time.time()
+
+        try:
+            # Executing the 'runIDFs' function
+            # runIDFs expects a list of IDF objects, 
+            # verbose='q' signifies "quiet" mode, minimizing Eppy's printed output.
+            # ep_args is used to pass additional command line arguments to EnergyPlus
+            # readvars=True allows eppy to attempt reading the .eso file after running
+            run_results = run(
+                idf_object,
+                weather=weather_path,
+                output_directory=output_dir,
+                output_prefix=output_prefix,
+                output_suffix=output_suffix,
+                verbose='v',
+                readvars=True, # It will generate .csv files from .eso files
+            )
+
+            if not run_results or len(run_results) == 0:
+                raise RuntimeError("EnergyPlus returned no results")
+            
+            result = run_results # get the result
+            stderr_output = result[1] if isinstance(result, tuple) and len(result) > 1 else ""
+            if stderr_output is None: 
+                stderr_output = ""
+
+            if "EnergyPlus Completed Successfully" in stderr_output or \
+                ("Error" not in stderr_output and "Fatal" not in stderr_output):
+                success = True
+                message = f"EnergyPlus simulation completed successfully, used {time.time() - start_time:.2f} seconds"
+            else:
+                success = False
+                stdout_output = result[0] if isinstance(result, tuple) else ""
+                message = f"EnergyPlus simulation failed, used {time.time() - start_time:.2f} seconds \n" \
+                        f"Stderr: \n {stderr_output} \n" \
+                        f"Stdout (): \n {stdout_output[:500]}"
+        
+        except FileNotFoundError as e:
+            success = False
+            message = f"{e} \n EnergyPlus executable not found at {self.eplus_path}"
+
+        except Exception as e:
+            success = False
+            message = f"Encountered an unexpected error while running EnergyPlus (eppy): {e}.  Execution time: {time.time() - start_time:.2f} seconds"
+
+        logging.info(message)
+
+        if cleanup:
+            cleanup_extensions = config.get('simulation', {}).get('cleanup_files', [])
+            if cleanup_extensions:
+                for filename in os.listdir(output_dir):
+                    if any(filename.lower().endswith(ext) for ext in cleanup_extensions) and \
+                        not filename.lower().endswith('.csv') and \
+                        not filename.lower().endswith('.idf'):
+                        try:
+                             file_to_remove = output_dir / filename
+                             if os.path.isfile(file_to_remove):
+                                 os.remove(file_to_remove)
+                        except OSError as e:
+                            logging.error(f"Error removing file {filename}: {e}")
+
+        return success, message
+    
+class SimulationResult:
+    """
+    Parsing EnergyPlus simulation output files
+    """
+    def __init__(self, output_dir: str, output_prefix: str):
+        """
+        Initialize the SimulationResult
+
+        Args:
+            output_dir (str): Directory containing the simulation output files
+            output_prefix (str): Prefix of the simulation output files
+        """
+        self.output_dir = output_dir
+        self.output_prefix = output_prefix
+
+        self.table_csv_path = os.path.join(output_dir, f"{output_prefix}Table.csv")
+        self.meter_csv_path = os.path.join(output_dir, f"{output_prefix}Meter.csv")
+        self.sql_path = os.path.join(output_dir, f"{output_prefix}.sql")
+
+        # Check if the output files exist
+        if not os.path.exists(self.table_csv_path):
+            logging.warning(f"Table CSV file not found at {self.table_csv_path}")
+        if not os.path.exists(self.meter_csv_path):
+            logging.warning(f"Meter CSV file not found at {self.meter_csv_path}")
+    
+    def get_meter_data(self,  columns_map:dict =None, year:int =None) -> pd.DataFrame:
+        """
+        Load and parse the Meter CSV file
+
+        Args:
+            columns_map (dict, optional): A dictionary mapping column names to new names. Defaults to None.
+            year (int, optional): The year to filter the data by. Defaults to None.
+
+        Returns:
+            pd.DataFrame: A pandas DataFrame containing the meter data
+        """
+        if not os.path.exists(self.meter_csv_path):
+            logging.warning(f"Meter CSV file not found at {self.meter_csv_path}")
+            return None
+        try:
+            df = pd.read_csv(self.meter_csv_path)
+            if 'Date/Time' in df.columns:
+                df['Date/Time'] = df['Date/Time'].astype(str).str.strip()
+                df['Timestamp'] = pd.to_datetime(df['Date/Time'], format=' %m/%d  %H:%M:%S', errors='coerce') # Note the space in E+ output format
+                df = df.dropna(subset=['Timestamp'])
+                if year: df['Timestamp'] = df['Timestamp'].apply(lambda dt: dt.replace(year=year))
+                df.set_index('Timestamp', inplace=True)
+                # df.drop(columns=['Date/Time'], inplace=True) # Optional
+            else: logging.warning("Warning: 'Date/Time' column not found in the CSV file.")
+
+            if columns_map: df.rename(columns=columns_map, inplace=True)
+
+            # Unit conversion (J -> kWh or W -> kW)
+            # EnergyPlus variables and Meter output to CSV/ESO are usually J or W
+            for col in df.columns:
+                if isinstance(df[col].iloc[0], (int, float)): # Only process numeric columns
+                    # Determine if it's energy (J) or power (W) - usually look at variable name or E+ documentation
+                    if 'Energy' in col and '[J]' in col: # Assume energy variable output unit is J
+                        df[col] = df[col] / 3_600_000 # J to kWh
+                        # (Optional) Rename column
+                        # df.rename(columns={col: col.replace('[J]', '[kWh]')}, inplace=True)
+                    elif 'Rate' in col and '[W]' in col: # Assume power variable output unit is W
+                        df[col] = df[col] / 1000 # W to kW
+                        # (Optional) Rename column
+                        # df.rename(columns={col: col.replace('[W]', '[kW]')}, inplace=True)
+                    elif '[J/m2]' in col: # Radiant energy density
+                        df[col] = df[col] / 3_600_000 # J/m2 to kWh/m2
+                    elif '[W/m2]' in col: # Radiant power density
+                        df[col] = df[col] / 1000 # W/m2 to kW/m2
+                    # (Add other possible unit conversions)
+            return df
+        except Exception as e:
+            print(f"Error: Error processing CSV file '{self.meter_csv_path}': {e}")
+            return None
+
+    def get_source_eui(self, ng_conversion_factor: float) -> float:
+        """
+        Extract the source EUI from the "Table.csv" file.
+
+        Args:
+            ng_conversion_factor (float): The conversion factor for natural gas to energy.
+
+        Returns:
+            float: The source EUI (kWh/m2/yr) or None if the source EUI is not found.
+        """
+        if not os.path.exists(self.table_csv_path):
+            logging.warning(f"Table CSV file not found at {self.table_csv_path}")
+            return None
+        target_section_start = "REPORT:,Annual Building Utility Performance Summary".lower()
+        target_data_row_start = ",Total Source Energy,".lower()
+        target_column_header = "Energy Per Total Building Area [kWh/m2]".lower()
+        
+        # Row above the data rows that serves as the header row indicator (used for locating target column indices).
+        header_row_start = ",,Total Energy [kWh]".lower()
+
+        in_target_section = False
+        header_found = False
+        target_col_index = -1
+
+        try:
+            with open(self.table_csv_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines = f.readlines()
+            
+            for line in lines:
+                line_processed = line.strip().lower()
+
+                # Check if the current line indicates the start of the target section
+                if target_section_start in line_processed:
+                    in_target_section = True
+                    continue
+                
+                if not in_target_section:
+                    continue
+                
+                if not header_found and line_processed.startswith(header_row_start):
+                    header_parts = [h.strip() for h in line_processed.split(',')]
+                    try:
+                        target_col_index = header_parts.index(target_column_header)
+                        header_found = True
+                    except ValueError:
+                        logging.warning(f"Target column header '{target_column_header}' not found in the header row.")
+                        return None
+                    continue
+                
+                if header_found and line_processed.startswith(target_data_row_start):
+                    data_parts = [p.strip() for p in line_processed.split(',')]
+                    logging.info(f"DEBUG: Found data row: {data_parts}")
+                    if len(data_parts) > target_col_index:
+                        try:
+                            source_eui_str = data_parts[target_col_index]
+                            source_eui = float(source_eui_str)
+                            logging.info(f"DEBUG: Extracted Source EUI string: '{source_eui_str}', float: {source_eui}")
+                            return source_eui
+                        except ValueError:
+                            logging.warning(f"Failed to convert source EUI string '{source_eui_str}' to float.")
+                            return None
+                    else:
+                        logging.error(f"Error: The target dataset has {len(data_parts)} columns, which is insufficient to retrieve the value at index {target_col_index}. Offending line: {line_processed}")
+                        return None
+            # If the loop completes without a match.
+            if target_col_index == -1:
+                logging.error(f"Warning: Unable to locate the header row, '{header_row_start}', within the '{target_section_start}' section of '{self.table_csv_path}'.")
+            else:
+                logging.error(f"Warning: Unable to locate the data row, '{target_data_row_start}', within the '{target_section_start}' section of '{self.table_csv_path}'.")
+            return None
+        except FileNotFoundError as e:
+            logging.error(f"Error: File not found: {e}")
+            return None
+        except Exception as e:
+            logging.error(f"Error: Unexpected error occurred while processing the table CSV file: {e}")
+            return None
+</file>
+
+<file path="backend/services/pv_service.py">
+# backend/services/pv_service.py
+
+import pandas as pd
+import logging
+import math
+from copy import copy
+from pathlib import Path
+from eppy.modeleditor import IDF
+from .idf_service import IDFModel
+from .simulation_service import EnergyPlusRunner
+
+
+class PVManager:
+    """
+    Manage the analysis, addition and simulation of PV systems.
+    """
+
+    def __init__(self, optimized_idf_model: IDFModel, runner: EnergyPlusRunner, config: dict, weather_path: str, base_work_dir: Path):
+        """
+        Initialize the PVManager with the necessary components.
+
+        Args:
+            optimized_idf_model (IDFModel): The optimized IDF model.
+            runner (EnergyPlusRunner): The EnergyPlus runner.
+            config (dict): The configuration dictionary.
+            weather_path (str): The path to the weather file.
+            base_work_dir (str): The base working directory.
+        """
+        self.optimized_idf_model = optimized_idf_model
+        self.runner = runner
+        self.config = config
+        self.weather_path = weather_path
+        self.work_dir = base_work_dir
+        self.pv_config = config.get('pv_analysis', {})
+        if not self.pv_config:
+            print("Warning: 'pv_analysis' section missing in config.")
+
+    def _add_shadow_outputs_to_idf(self, idf_model: IDFModel):
+        """Add output variables required for shadow analysis to the IDF object (W/m2)."""
+        output_variables = [
+            "Surface Outside Face Incident Solar Radiation Rate per Area",  # Unit: W/m2
+            "Surface Outside Face Sunlit Fraction",  # Unitless
+        ]
+        idf = idf_model.idf
+        for var_name in output_variables:
+            exists = False
+            for ov in idf.idfobjects.get("OUTPUT:VARIABLE", []):
+                if ov.Key_Value == "*" and ov.Variable_Name.lower() == var_name.lower():
+                    exists = True
+                    break
+            if not exists:
+                idf.newidfobject("OUTPUT:VARIABLE", Key_Value="*",
+                                 Variable_Name=var_name, Reporting_Frequency="Hourly")
+
+    def _calculate_radiation_score(self, annual_radiation_kwh_per_m2: float) -> float:
+        """
+        Calculate radiation score based on annual radiation (kWh/m2).
+
+        Args:
+            annual_radiation_kwh_per_m2 (float): Annual radiation (kWh/m2).
+
+        Returns:
+            float: Radiation score (0-100).
+        """
+        # Get thresholds from config (already in kWh/m2)
+        high_threshold = self.pv_config.get("radiation_threshold_high", 1000.0)
+        low_threshold = self.pv_config.get("radiation_threshold_low", 600.0)
+        max_score = self.pv_config.get("max_score", 100.0)
+        min_score = self.pv_config.get("min_score", 0.0)
+
+        if annual_radiation_kwh_per_m2 > high_threshold:
+            return max_score
+        elif annual_radiation_kwh_per_m2 >= low_threshold:
+            # Ensure denominator is not zero
+            if high_threshold > low_threshold:
+                return min_score + (max_score - min_score) * \
+                    (annual_radiation_kwh_per_m2 - low_threshold) / \
+                    (high_threshold - low_threshold)
+            else:  # If thresholds are the same, score is max if above threshold
+                return max_score if annual_radiation_kwh_per_m2 >= low_threshold else min_score
+        else:
+            return min_score
+
+    def find_suitable_surfaces(self) -> list[dict] | None:
+        """Execute shadow analysis simulation and find suitable surfaces for PV installation."""
+        print("--- Start shadow analysis to find suitable PV surfaces ---")
+        shadow_run_id = "optimized_shadow"
+        shadow_idf_path = self.work_dir / \
+            shadow_run_id / f"{shadow_run_id}.idf"
+        shadow_output_dir = self.work_dir / shadow_run_id
+        shadow_output_prefix = self.pv_config.get(
+            'shadow_output_prefix', 'shadow')
+        shadow_output_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            temp_idf = copy(self.optimized_idf_model.idf)
+            shadow_idf = IDFModel(shadow_idf_path, eppy_idf_object=temp_idf)
+            self._add_shadow_outputs_to_idf(shadow_idf)
+            shadow_idf.save()
+
+            success, message = self.runner.run_simulation(
+                idf_path=shadow_idf_path, weather_path=self.weather_path,
+                output_dir=shadow_output_dir, output_prefix=shadow_output_prefix,
+                config=self.config)
+            if not success:
+                logging.error(
+                    f"Error: Shadow analysis simulation failed: {message}")
+                return None
+
+            # --- Parse results ---
+            csv_path = shadow_output_dir / f"{shadow_output_prefix}.csv"
+            if not csv_path.exists():
+                logging.error(
+                    f"Error: Shadow analysis output file not found: {csv_path}")
+                return None
+
+            df = pd.read_csv(csv_path)
+            target_surface_types = [s.upper() for s in self.pv_config.get(
+                'shadow_calculation_surface_types', ['ROOF'])]
+            suitable_surfaces = []
+            all_surfaces = self.optimized_idf_model.idf.idfobjects.get(
+                "BUILDINGSURFACE:DETAILED", [])
+
+            for surface in all_surfaces:
+                if hasattr(surface, 'Outside_Boundary_Condition') and \
+                        surface.Outside_Boundary_Condition.upper() == "OUTDOORS" and \
+                        hasattr(surface, 'Surface_Type') and \
+                        surface.Surface_Type.upper() in target_surface_types:
+                    surface_name = surface.Name
+                    radiation_col = None
+                    # --- Find radiation column ---
+                    rad_var_name = "Surface Outside Face Incident Solar Radiation Rate per Area".upper()
+                    for col in df.columns:
+                        # Improve matching logic to ensure full surface name matches (avoid partial matches) and variable name is correct
+                        col_upper = col.upper()
+                        # Expected format: SURFACE_NAME:VAR_NAME [W/m2](Hourly)
+                        parts = col_upper.split(':')
+                        if len(parts) > 1 and surface_name.upper() in col_upper and rad_var_name in col_upper:
+                            radiation_col = col
+                            break
+
+                    if radiation_col:
+                        try:
+                            # --- Calculate annual radiation (kWh/m2) ---
+                            # E+ output frequency is Hourly, value is the average rate for that hour (W/m2)
+                            # Annual total energy (Wh/m2) = Σ( hourly_average_rate_W_m2 * 1_hour )
+                            # W/m2 * h = Wh/m2
+                            annual_wh_per_m2 = df[radiation_col].sum()
+                            annual_kwh_per_m2 = annual_wh_per_m2 / 1000.0  # kWh/m2
+                            # --- Calculate score ---
+                            radiation_score = self._calculate_radiation_score(
+                                annual_kwh_per_m2)  # Use kWh/m2
+                            area = self.optimized_idf_model.get_surface_area(
+                                surface_name)  # Get the area of the surface
+
+                            # 确保面积有效
+                            if radiation_score >= self.pv_config.get('radiation_score_threshold', 70) and area > 0:
+                                suitable_surfaces.append({
+                                    "name": surface_name,
+                                    "area": round(area, 2),
+                                    "radiation_score": round(radiation_score, 1),
+                                    # Store kWh/m2
+                                    "annual_radiation_kwh": round(annual_kwh_per_m2, 1)
+                                })
+                        except Exception as calc_e:
+                            logging.warning(
+                                f"Warning: Error calculating surface '{surface_name}' radiation or score: {calc_e}")
+                    else:
+                        logging.warning(
+                            f"Warning: No radiation data column found for surface '{surface_name}'.")
+
+            if not suitable_surfaces:
+                logging.warning(
+                    "Warning: No suitable surfaces found for PV installation.")
+                return []
+            suitable_surfaces.sort(
+                key=lambda x: x["radiation_score"], reverse=True)
+            logging.info(
+                f"Found {len(suitable_surfaces)} suitable surfaces for PV installation.")
+            return suitable_surfaces
+        except Exception as e:
+            logging.error(f"Error: Error during shadow analysis: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _clear_existing_pv_objects(self, idf_model: IDFModel):
+        """Clear existing PV-related objects from the IDF model."""
+        logging.info("Clearing existing PV-related objects...")
+        objects_to_remove = [
+            "Generator:Photovoltaic",
+            "PhotovoltaicPerformance:Simple",
+            "PhotovoltaicPerformance:EquivalentOne-Diode",
+            "PhotovoltaicPerformance:Sandia",
+            "Generator:PVWatts",
+            "ElectricLoadCenter:Inverter:Simple",
+            "ElectricLoadCenter:Inverter:PVWatts",
+            "ElectricLoadCenter:Generators",
+            "ElectricLoadCenter:Distribution",
+        ]
+        idf_model.remove_objects_by_type(objects_to_remove)
+        logging.info("Successfully cleared existing PV-related objects.")
+
+    def _create_common_electrical_components(self, idf: IDF, inverter_name: str, inverter_type: str, elcd_name: str, elcg_name: str):
+        """Create common electrical components (inverter, distribution center, generator list)."""
+        logging.info(
+            f"Creating common electrical components: inverter: {inverter_name}, inverter type: {inverter_type}")
+        if inverter_name == "PV_System_Generic_Inverter":
+            idf.newidfobject(
+                inverter_type,
+                Name=inverter_name,
+                Availability_Schedule_Name="",
+                Inverter_Efficiency=self.pv_config.get(
+                    'pv_inverter_efficiency', 0.96)
+            )
+        elif inverter_name == "PV_System_PVWatts_Inverter":
+            idf.newidfobject(
+                inverter_type,
+                Name=inverter_name,
+                DC_to_AC_Size_Ratio=self.pv_config.get(
+                    'pvwatts_dc_ac_ratio', 1.1),
+                Inverter_Efficiency=self.pv_config.get(
+                    'pvwatts_inverter_efficiency', 0.96)
+            )
+        else:
+            logging.error(f"Error: Unsupported inverter type: {inverter_type}")
+            return None
+        logging.info(f"Creating generator list: {elcg_name}")
+        pv_elcg = idf.newidfobject(
+            "ElectricLoadCenter:Generators", Name=elcg_name)
+        logging.info(f"Creating distribution center: {elcd_name}")
+        idf.newidfobject(
+            "ElectricLoadCenter:Distribution",
+            Name=elcd_name,
+            Generator_List_Name=elcg_name,
+            Generator_Operation_Scheme_Type="Baseload",
+            Electrical_Buss_Type="DirectCurrentWithInverter",
+            Inverter_Name=inverter_name
+        )
+        return pv_elcg
+
+    def _request_pv_output_variables(self, idf: IDF, pv_generator_name: str):
+        """
+        Request output variables for PV generation.
+
+        Args:
+            idf (IDF): The IDF object.
+            pv_generator_name (str): The name of the PV generator.
+
+        Returns:
+            bool: True if output variables are requested successfully, False otherwise.
+        """
+        pv_rate_var = "Generator Produced DC Electricity Rate"
+        pv_energy_var = "Generator Produced DC Electric Energy"
+        if not any(ov.Key_Value.upper() == pv_generator_name.upper() and ov.Variable_Name.upper() == pv_rate_var.upper()
+                   for ov in idf.idfobjects.get("OUTPUT:VARIABLE", [])):
+            idf.newidfobject("Output:Variable", Key_Value=pv_generator_name,
+                             Variable_Name=pv_rate_var, Reporting_Frequency="Hourly")
+        if not any(ov.Key_Value.upper() == pv_generator_name.upper() and ov.Variable_Name.lower() == pv_energy_var.lower()
+                   for ov in idf.idfobjects.get("OUTPUT:VARIABLE", [])):
+            idf.newidfobject("Output:Variable", Key_Value=pv_generator_name,
+                             Variable_Name=pv_energy_var, Reporting_Frequency="Hourly")
+
+    def _apply_pv_simple(self, idf: IDF, suitable_surfaces: list[dict], elcg_obj) -> list[dict]:
+        """
+        Apply a simple PV system to the IDF model.
+
+        Args:
+            idf (IDF): The IDF object.
+            suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+        """
+        added_pv_details = []
+        logging.info(
+            f"Applying PhotovoltaicPerformance:Simple to {len(suitable_surfaces)} surfaces...")
+        for i, surface_info in enumerate(suitable_surfaces):
+            surface_name = surface_info["name"]
+            pv_gen_name = f"PVGen_Simple_{surface_name.replace(' ', '_').replace(':','_')}"
+            pv_perf_name = f"{pv_gen_name}_Perf"
+
+            idf.newidfobject(
+                "Generator:Photovoltaic",
+                Name=pv_gen_name,
+                Surface_Name=surface_name,
+                Photovoltaic_Performance_Object_Type="PhotovoltaicPerformance:Simple",
+                Module_Performance_Name=pv_perf_name,
+                Heat_Transfer_Integration_Mode=self.pv_config.get(
+                    'heat_transfer_integration_mode', "Decoupled")
+            )
+
+            idf.newidfobject(
+                "PhotovoltaicPerformance:Simple",
+                Name=pv_perf_name,
+                Fraction_of_Surface_Area_with_Active_Solar_Cells=self.pv_config.get(
+                    'simple_pv_coverage', 0.8),
+                Conversion_Efficiency_Input_Mode="Fixed",
+                Value_for_Cell_Efficiency_if_Fixed=self.pv_config.get(
+                    'simple_pv_efficiency', 0.18)
+            )
+            setattr(elcg_obj, f"Generator_{i+1}_Name", pv_gen_name)
+            setattr(
+                elcg_obj, f"Generator_{i+1}_Object_Type", "Generator:Photovoltaic")
+
+            self._request_pv_output_variables(idf, pv_gen_name)
+            added_pv_details.append(
+                {"pv_name": pv_gen_name, "surface": surface_name, "model": "simple"})
+        return added_pv_details
+
+    def _apply_pv_sandia(self, idf: IDF, suitable_surfaces: list[dict], elcg_obj) -> list[dict]:
+        """
+        Apply a Sandia PV system to the IDF model.
+
+        Args:
+            idf (IDF): The IDF object.
+            suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+        """
+        added_pv_details = []
+        logging.info(
+            f"Applying PhotovoltaicPerformance:Sandia to {len(suitable_surfaces)} surfaces...")
+        sandia_params_config = self.pv_config.get('sandia_module_params', {})
+        required_sandia_keys = [
+            'active_area', 'num_cells_series', 'num_cells_parallel',
+            'short_circuit_current', 'open_circuit_voltage',
+            'current_at_mpp', 'voltage_at_mpp', 'aIsc', 'aImp', 'c0', 'c1',
+            'BVoc0', 'mBVoc', 'BVmp0', 'mBVmp', 'diode_factor', 'c2', 'c3',
+            'a0', 'a1', 'a2', 'a3', 'a4', 'b0', 'b1', 'b2', 'b3', 'b4', 'b5',
+            'delta_tc', 'fd', 'a', 'b', 'c4', 'c5', 'Ix0', 'Ixx0', 'c6', 'c7'
+        ]
+        missing_keys = [
+            key for key in required_sandia_keys if key not in sandia_params_config]
+        if missing_keys:
+            logging.error(
+                f"Error: Missing required Sandia parameters: {missing_keys}")
+            return []
+        
+        pv_perf_name = "PV_Sandia_Performance"
+
+        for i, surface_info in enumerate(suitable_surfaces):
+            surface_name = surface_info["name"]
+            surface_area = surface_info["area"]
+            pv_gen_name = f"PVGen_Sandia_{surface_name.replace(' ', '_').replace(':','_')}"
+
+            module_active_area = sandia_params_config.get('active_area', 1.0)
+            sandia_coverage = self.pv_config.get('sandia_pv_coverage', 0.9)
+            num_modules_in_series = 1
+            num_series_strings = 1
+
+            if module_active_area > 0:
+                total_modules_on_surface = math.floor(
+                    (surface_area * sandia_coverage) / module_active_area)
+                if total_modules_on_surface > 0:
+                    num_modules_in_series = total_modules_on_surface
+                else:
+                    logging.warning(
+                        f"Warning: Not enough surface area for PV-Sandia Component installation on {surface_name} Skipping...")
+            else:
+                logging.warning(
+                    f"Sandia component effective area is zero or not configured, skipping surface '{surface_name}'")
+                continue
+
+            idf.newidfobject(
+                "Generator:Photovoltaic",
+                Name=pv_gen_name,
+                Surface_Name=surface_name,
+                Photovoltaic_Performance_Object_Type="PhotovoltaicPerformance:Sandia",
+                Module_Performance_Name=pv_perf_name,
+                Heat_Transfer_Integration_Mode=self.pv_config.get(
+                    'heat_transfer_integration_mode', "Decoupled"),
+                Number_of_Series_Strings_in_Parallel=num_series_strings,
+                Number_of_Modules_in_Series=num_modules_in_series
+            )
+            setattr(elcg_obj, f"Generator_{i+1}_Name", pv_gen_name)
+            setattr(elcg_obj, f"Generator_{i+1}_Object_Type", "Generator:Photovoltaic")
+            added_pv_details.append({"pv_name": pv_gen_name, "surface": surface_name, "model": "sandia"})
+            self._request_pv_output_variables(idf, pv_gen_name)
+        self._sandia_pv_params_to_idf(idf, sandia_params_config, pv_perf_name)
+        return added_pv_details
+    
+    def _sandia_pv_params_to_idf(self, idf, sandia_params_config, pv_perf_name):
+        sandia_perf = idf.newidfobject("PhotovoltaicPerformance:Sandia", Name=pv_perf_name)
+        sandia_perf.Active_Area = sandia_params_config['active_area']
+        sandia_perf.Number_of_Cells_in_Series = sandia_params_config['num_cells_series']
+        sandia_perf.Number_of_Cells_in_Parallel = sandia_params_config['num_cells_parallel']
+        sandia_perf.Short_Circuit_Current = sandia_params_config['short_circuit_current']
+        sandia_perf.Open_Circuit_Voltage = sandia_params_config['open_circuit_voltage']
+        sandia_perf.Current_at_Maximum_Power_Point = sandia_params_config['current_at_mpp']
+        sandia_perf.Voltage_at_Maximum_Power_Point = sandia_params_config['voltage_at_mpp']
+        sandia_perf.Sandia_Database_Parameter_aIsc = sandia_params_config['aIsc']
+        sandia_perf.Sandia_Database_Parameter_aImp = sandia_params_config['aImp']
+        sandia_perf.Sandia_Database_Parameter_c0 = sandia_params_config['c0']
+        sandia_perf.Sandia_Database_Parameter_c1 = sandia_params_config['c1']
+        sandia_perf.Sandia_Database_Parameter_BVoc0 = sandia_params_config['BVoc0']
+        sandia_perf.Sandia_Database_Parameter_mBVoc = sandia_params_config['mBVoc']
+        sandia_perf.Sandia_Database_Parameter_BVmp0 = sandia_params_config['BVmp0']
+        sandia_perf.Sandia_Database_Parameter_mBVmp = sandia_params_config['mBVmp']
+        sandia_perf.Diode_Factor = sandia_params_config['diode_factor']
+        sandia_perf.Sandia_Database_Parameter_c2 = sandia_params_config['c2']
+        sandia_perf.Sandia_Database_Parameter_c3 = sandia_params_config['c3']
+        sandia_perf.Sandia_Database_Parameter_a0 = sandia_params_config['a0']
+        sandia_perf.Sandia_Database_Parameter_a1 = sandia_params_config['a1']
+        sandia_perf.Sandia_Database_Parameter_a2 = sandia_params_config['a2']
+        sandia_perf.Sandia_Database_Parameter_a3 = sandia_params_config['a3']
+        sandia_perf.Sandia_Database_Parameter_a4 = sandia_params_config['a4']
+        sandia_perf.Sandia_Database_Parameter_b0 = sandia_params_config['b0']
+        sandia_perf.Sandia_Database_Parameter_b1 = sandia_params_config['b1']
+        sandia_perf.Sandia_Database_Parameter_b2 = sandia_params_config['b2']
+        sandia_perf.Sandia_Database_Parameter_b3 = sandia_params_config['b3']
+        sandia_perf.Sandia_Database_Parameter_b4 = sandia_params_config['b4']
+        sandia_perf.Sandia_Database_Parameter_b5 = sandia_params_config['b5']
+        sandia_perf.Sandia_Database_Parameter_DeltaTc = sandia_params_config['delta_tc'] # IDD 中是 Sandia_Database_Parameter_Delta(Tc)
+        sandia_perf.Sandia_Database_Parameter_fd = sandia_params_config['fd']
+        sandia_perf.Sandia_Database_Parameter_a = sandia_params_config['a']
+        sandia_perf.Sandia_Database_Parameter_b = sandia_params_config['b']
+        sandia_perf.Sandia_Database_Parameter_c4 = sandia_params_config['c4']
+        sandia_perf.Sandia_Database_Parameter_c5 = sandia_params_config['c5']
+        sandia_perf.Sandia_Database_Parameter_Ix0 = sandia_params_config['Ix0']
+        sandia_perf.Sandia_Database_Parameter_Ixx0 = sandia_params_config['Ixx0']
+        sandia_perf.Sandia_Database_Parameter_c6 = sandia_params_config['c6']
+        sandia_perf.Sandia_Database_Parameter_c7 = sandia_params_config['c7']
+    
+    def _apply_pv_pvwatts(self, idf, suitable_surfaces: list[dict], elcg_obj) -> list[dict]:
+        """
+        Apply a PVWatts system to the IDF model.
+
+        Args:
+            idf (IDF): The IDF object.
+            suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+        """
+        added_pv_details = []
+        logging.info(f"应用 Generator:PVWatts 模型...")
+        total_suitable_area = sum(s['area'] for s in suitable_surfaces)
+        if total_suitable_area <= 0:
+            logging.warning("没有合适的表面积用于 PVWatts 系统。"); return []
+
+        dc_capacity_per_sqm = self.pv_config.get('pvwatts_dc_system_capacity_per_sqm', 0)
+        if dc_capacity_per_sqm <= 0:
+            simple_eff = self.pv_config.get('simple_pv_efficiency', 0.18) # 回退到用 simple 参数估算
+            simple_cov = self.pv_config.get('simple_pv_coverage', 0.8)
+            dc_capacity_per_sqm = 1000 * simple_eff * simple_cov
+            logging.info(f"PVWatts 单位面积容量未配置，使用估算值: {dc_capacity_per_sqm:.2f} W/m2")
+
+
+        total_dc_capacity = total_suitable_area * dc_capacity_per_sqm
+        if total_dc_capacity <=0:
+            logging.warning("PVWatts 总直流容量计算为零或负，不添加 PVWatts 系统。"); return []
+
+        pv_gen_name = f"PVWatts_System_Overall_{self.optimized_idf_model.idf.name.split('.')[0]}" # 使用IDF文件名的一部分确保唯一性
+
+        representative_surface_name = suitable_surfaces[0]['name'] if suitable_surfaces else None
+        array_geometry_type = "Surface" if representative_surface_name else "TiltAzimuth"
+
+        idf.newidfobject(
+            "Generator:PVWatts",
+            Name=pv_gen_name,
+            PVWatts_Version=5,
+            DC_System_Capacity=total_dc_capacity,
+            Module_Type=self.pv_config.get('pvwatts_module_type', 'Standard'),
+            Array_Type=self.pv_config.get('pvwatts_array_type', 'FixedRoofMounted'),
+            System_Losses=self.pv_config.get('pvwatts_system_losses', 0.14),
+            Array_Geometry_Type=array_geometry_type,
+            Surface_Name=representative_surface_name if representative_surface_name else "",
+            Ground_Coverage_Ratio=self.pv_config.get('pvwatts_ground_coverage_ratio', 0.4)
+        )
+        setattr(elcg_obj, "Generator_1_Name", pv_gen_name) # PVWatts通常只有一个系统
+        setattr(elcg_obj, "Generator_1_Object_Type", "Generator:PVWatts")
+        self._request_pv_output_variables(idf, pv_gen_name)
+        added_pv_details.append({"pv_name": pv_gen_name, "total_area_used": total_suitable_area, "model": "pvwatts", "dc_capacity_w": total_dc_capacity})
+        return added_pv_details
+
+
+    def add_pv_to_idf(self, suitable_surfaces: list[dict], pv_run_id: str) -> str | None:
+        """
+        Adds a PV system to the base IDF model objects.
+        All existing PV-related objects are cleared before adding.
+
+        Args:
+            suitable_surfaces (list[dict]): List of suitable surfaces for PV installation.
+            pv_run_id (str): The ID of the PV run.
+
+        Returns:
+            str | None: The path to the modified IDF file.
+        """
+        if not self.pv_config.get('enabled', False):
+            logging.info("PV 分析在配置中被禁用。")
+            return self.optimized_idf_model.idf_path
+
+        if not suitable_surfaces:
+            logging.info("信息: 未提供适合的表面，不添加 PV 系统。")
+            return self.optimized_idf_model.idf_path
+
+        model_type = self.pv_config.get('pv_model_type', 'Simple').lower()
+        logging.info(f"--- 向 IDF 添加光伏系统 (模型类型: {model_type}) ---")
+
+        pv_output_dir = self.work_dir / pv_run_id
+        pv_output_dir.mkdir(parents=True, exist_ok=True)
+        pv_idf_path = pv_output_dir / f"{pv_run_id}.idf"
+
+        try:
+            idf_object_to_modify = copy(self.optimized_idf_model.idf)
+            idf_model = IDFModel(str(pv_idf_path), eppy_idf_object=idf_object_to_modify)
+            idf = idf_model.idf
+
+            self._clear_existing_pv_objects(idf_model)
+
+            pv_elcd_name = "PV_System_ELCD"
+            pv_elcg_name = "PV_System_GeneratorList"
+            inverter_name_to_use = ""
+            inverter_type_to_use = ""
+            added_pv_details = []
+
+            if model_type == 'simple' or model_type == 'sandia':
+                inverter_name_to_use = "PV_System_Generic_Inverter"
+                inverter_type_to_use = "ElectricLoadCenter:Inverter:Simple"
+            elif model_type == 'pvwatts':
+                inverter_name_to_use = "PV_System_PVWatts_Inverter"
+                inverter_type_to_use = "ElectricLoadCenter:Inverter:PVWatts"
+            else:
+                logging.error(f"未知的 PV 模型类型: {model_type}")
+                return self.optimized_idf_model.idf_path
+
+            elcg_obj = self._create_common_electrical_components(idf, inverter_name_to_use, inverter_type_to_use, pv_elcd_name, pv_elcg_name)
+            if elcg_obj is None: # 创建电气组件失败
+                logging.error("创建通用电气组件失败，无法继续添加 PV。")
+                return self.optimized_idf_model.idf_path
+
+
+            if model_type == 'simple':
+                added_pv_details = self._apply_pv_simple(idf, suitable_surfaces, elcg_obj)
+            elif model_type == 'sandia':
+                added_pv_details = self._apply_pv_sandia(idf, suitable_surfaces, elcg_obj)
+            elif model_type == 'pvwatts':
+                added_pv_details = self._apply_pv_pvwatts(idf, suitable_surfaces, elcg_obj)
+
+            if not added_pv_details:
+                logging.warning("没有成功添加任何 PV 系统。将返回原始优化后的 IDF 路径。")
+                return self.optimized_idf_model.idf_path # 如果没有添加任何 PV，可能返回原始IDF更好
+
+            idf_model.save(pv_idf_path)
+            logging.info(f"PV 系统已添加/更新 ({len(added_pv_details)} 个系统)，新的 IDF 文件保存到: {pv_idf_path}")
+            logging.debug(f"添加的 PV 详情: {added_pv_details}")
+            return pv_idf_path
+
+        except Exception as e:
+            logging.error(f"错误: 向 IDF 添加 PV 系统时出错: {e}")
+            import traceback; traceback.print_exc()
+            return None
+
+    def analyze_pv_generation(self, pv_output_prefix: str) -> dict | None:
+        """Analyze the simulation results with PV, calculate PV generation (kWh, kW)."""
+        logging.info("--- Analyze PV generation results ---")
+        pv_sim_dir = self.work_dir / "optimized_pv"
+        csv_path = pv_sim_dir / f"{pv_output_prefix}.csv"
+        if not csv_path.exists():
+            logging.error(
+                f"Error: PV simulation result file not found: {csv_path}")
+            return None
+
+        try:
+            df = pd.read_csv(csv_path)
+            pv_results = {"systems": {}, "total_annual_kwh": 0.0}
+            total_energy_kwh = 0.0
+            # Find all PV generation rate columns (unit: W)
+            pv_rate_var_name = "Generator Produced DC Electricity Rate".upper()
+            pv_rate_cols = [
+                col for col in df.columns if pv_rate_var_name in col.upper()]
+
+            if not pv_rate_cols:
+                logging.warning(
+                    "Warning: No PV generation rate columns found.")
+                return pv_results
+
+            for col_name in pv_rate_cols:
+                try:
+                    pv_name = col_name.split(':')[0].strip()
+                    # --- Calculate annual generation kWh ---
+                    # Annual total Wh = Σ( hourly_rate_W )
+                    annual_wh = df[col_name].sum()
+                    annual_kwh = annual_wh / 1000.0
+                    # --- Calculate peak power kW ---
+                    max_w = df[col_name].max()
+                    max_kw = max_w / 1000.0
+
+                    pv_results["systems"][pv_name] = {
+                        "annual_energy_kwh": round(annual_kwh, 2),
+                        "peak_power_kw": round(max_kw, 2)
+                    }
+                    total_energy_kwh += annual_kwh
+                except Exception as inner_e:
+                    logging.warning(
+                        f"Warning: Error processing PV column '{col_name}': {inner_e}")
+
+            pv_results["total_annual_kwh"] = round(total_energy_kwh, 2)
+            logging.info(
+                f"PV generation analysis completed. Total annual generation: {pv_results['total_annual_kwh']:.2f} kWh.")
+
+            # --- Calculate monthly generation kWh ---
+            if 'Date/Time' in df.columns:
+                try:
+                    df['Timestamp'] = pd.to_datetime(
+                        df['Date/Time'], format=' %m/%d  %H:%M:%S', errors='coerce')
+                    df.dropna(subset=['Timestamp'], inplace=True)
+                    df['Month'] = df['Timestamp'].dt.month
+
+                    for pv_name, results_dict in pv_results["systems"].items():
+                        results_dict["monthly_energy_kwh"] = {}
+                        col = next(
+                            (c for c in pv_rate_cols if pv_name.upper() in c.upper()), None)  # 查找对应列
+                        if col:
+                            monthly_wh = df.groupby(
+                                'Month')[col].sum()  # 月总 Wh
+                            for month in range(1, 13):
+                                results_dict["monthly_energy_kwh"][month] = round(
+                                    monthly_wh.get(month, 0) / 1000.0, 2)  # Wh -> kWh
+                except Exception as month_e:
+                    logging.warning(
+                        f"Warning: Error calculating monthly PV generation: {month_e}")
+
+            return pv_results
+        except Exception as e:
+            logging.error(f"Error: Error analyzing PV results: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+</file>
+
+<file path="backend/services/optimization_service.py">
+import time
+import collections
+import numpy as np
+import pandas as pd
+import shutil
+import logging
+import json
+from .pv_service import PVManager
+from .idf_service import IDFModel
+from .simulation_service import EnergyPlusRunner, SimulationResult
+from joblib import Parallel, delayed
+from SALib.sample import saltelli
+from SALib.analyze import sobol
+from scipy.optimize import minimize
+from sklearn.ensemble import RandomForestRegressor
+from statsmodels.formula.api import ols
+
+class OptimizationPipeline:
+    """
+    Encapsulates the entire building energy optimization process: 
+    simulation, sensitivity, analysis, optimization, and validation.
+    """
+    def __init__(self, city: str, ssp: int, btype: str, config: dict):
+        """
+        Initialize the optimization pipeline
+
+        Args:
+            city (str): City name
+            ssp (int): SSP scenario ('TMY', 126, 245, 370, 585)
+            btype (str): Building type
+            config (dict): Configuration dictionary
+        """
+
+        self.city = city
+        self.ssp = str(ssp)
+        self.btype = btype
+        self.config = config
+        self.unique_id = f"{city}_{btype}_{ssp}"
+
+        # Path Configuration
+        self.prototype_idf_path = self._find_prototype_idf() # Path to the prototype IDF file
+        self.weather_path = self._find_weather_file() # Path to the weather file
+
+        # WorkDirectory Configuration
+        self.work_dir = self.config['paths']['epsim_dir'] / self.unique_id
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Initialize Simulation Components
+        self.runner = EnergyPlusRunner(self.config['paths']['eplus_executable'])
+        self.ecm_ranges = config['ecm_ranges']
+        self.ecm_names = list(self.ecm_ranges.keys())
+
+        # Initialize Results
+        self.baseline_eui = None # Benchmark EUI
+        self.building_floor_area = None # Building floor area
+        self.sensitivity_samples = None # Sample sensitivity analysis (discrete)
+        self.sensitivity_results = None # Sobol Analysis Results (Indices)
+        self.surrogate_model = None # Surrogate Model
+        self.surrogate_model_summary = None # Surrogate Model Summary or Feature Importance
+        self.optimization_result = None # Raw Results from scipy.optimize
+        self.optimal_params = None # Optimized parameter set achieving the best results
+        self.optimal_eui_predicted = None # Optimal EUI Prediction via Surrogate Model
+        self.optimal_eui_simulated = None # EUI Optimized Through Real-World Simulation
+        self.optimization_improvement = None # EUI Improvement Rate
+        self.optimization_bias = None # Optimization bias
+        self.suitable_surfaces = None # Suitable surfaces for PV installation
+        self.pv_idf_path = None # Path to the IDF file with PV
+        self.pv_generation_results = None # PV generation results
+        self.gross_eui_with_pv = None # Gross EUI with PV
+        self.net_eui_with_pv = None # Net EUI with PV
+
+    def _find_prototype_idf(self):
+        """
+        Find the prototype IDF file for the given city and building type
+        """
+        proto_dir = self.config['paths']['prototypes_dir']
+        if not proto_dir.exists():
+            logging.error(f"Prototype directory not found: {proto_dir}")
+            return None
+        found = [f for f in proto_dir.glob("*.idf") if self.btype.lower() in f.stem.lower()]
+        if not found:
+            logging.error(f"No prototype IDF file found for {self.btype}")
+            return None
+        logging.info(f"Found prototype IDF file: {found[0]}")
+        return found[0]
+    
+    def _find_weather_file(self):
+        """
+        Find the weather file for the given city and SSP
+        """
+        search_city = self.city.lower()
+        search_ssp = self.ssp.lower()
+        if self.ssp.upper() == 'TMY':
+            epw_dir = self.config['paths']['tmy_dir']
+        else:
+            epw_dir = self.config['paths']['ftmy_dir']
+
+        if not epw_dir.exists():
+            logging.error(f"Weather directory not found: {epw_dir}")
+            return None
+        found = [f for f in epw_dir.glob("*.epw") if search_city in f.stem.lower() and search_ssp in f.stem.lower()]
+        if not found:
+            logging.error(f"No weather file found for {self.city} and {self.ssp}")
+            return None
+        logging.info(f"Found weather file: {found[0]}")
+        return found[0]
+    
+    def _continuous_to_discrete(self, value: float, param_name: str) -> float:
+        """
+        Maps a continuous value within the range of [0, 1) to 
+        a discrete level based on provided parameters.
+
+        Args:
+            value (_type_): _description_
+            param_name (_type_): _description_
+        """
+
+        discrete_levels = self.ecm_ranges.get(param_name)
+        if not discrete_levels:
+            logging.error(f"No discrete levels defined for {param_name}")
+            raise ValueError(f"Unknown ECM Parameter: {param_name}")
+        if not isinstance(discrete_levels, list) or len(discrete_levels) == 0:
+            logging.error(f"Invalid discrete levels for {param_name}: {discrete_levels}")
+            raise ValueError(f"The provided discrete levels for parameter '{param_name}' are invalid: {discrete_levels}")
+
+        # Create split points, one more than the number of discrete levels
+        space = np.linspace(0, 1, len(discrete_levels) + 1)
+        # Ensure the value is within the range [0,1)
+        value = np.max([0, np.min([value, 0.999999])])
+
+        for i in range(len(discrete_levels)):
+            # check if value falls in the i-th interval [space[i], space[i+1]
+            if value >= space[i] and value < space[i+1]:
+                return discrete_levels[i]
+        
+        # If the value is nearing 1, return the last discrete value (handling edge cases).
+        return discrete_levels[-1]
+
+    def _params_array_to_dict(self, params_array):
+        """
+        Converts an array of parameters to a parameter name dictionary.
+        """
+        return {name: val for name, val in zip(self.ecm_names, params_array)}
+    
+    def _apply_ecms_to_idf(self, idf_model: IDFModel, params_dict: dict):
+        """
+        Applies the ECMs to the IDF model based on the provided parameters.
+
+        Args:
+            idf_model (IDF): IDF model to apply the ECMs to
+            params_dict (dict): Dictionary of parameters to apply the ECMs to
+        """
+        for param_name, value in params_dict.items():
+            if param_name in self.ecm_ranges:
+                if value == 0 and param_name not in ['nv_area']:
+                    continue
+
+            if param_name == 'shgc':
+                # 需要结合 win_U 一起处理，或者假设单独修改？
+                # 这里简化为假设 apply_window_properties 能处理部分参数更新
+                # 可能需要获取当前的 U 值来配合修改
+                # current_u, _, current_vt = idf_model.get_window_properties_from_table() # 需要实现此方法或缓存
+                # if current_u and current_vt:
+                #     idf_model.apply_window_properties(current_u, value, current_vt)
+                pass
+
+            elif param_name == 'win_u':
+                pass # 暂时跳过单独修改 U 值
+
+            elif param_name == 'nv_area':
+                if value >= 0:
+                    idf_model.apply_natural_ventilation(value)
+            elif param_name == 'insu':
+                idf_model.apply_wall_insulation(value)
+            elif param_name == 'infl':
+                idf_model.apply_air_infiltration(value)
+            elif param_name == 'cool_cop':
+                idf_model.apply_cooling_cop(value)
+            elif param_name == 'cool_air_temp':
+                idf_model.apply_cooling_supply_temp(value)
+            elif param_name == 'lighting':
+                lighting_level = int(value)
+                if lighting_level == 0:
+                    continue
+                    
+                reduction_map = self.config.get('lighting_reduction_map', {})
+
+                # Find reduction factors based on building type and classification.
+                btype_key = self.btype.lower()
+
+                # Retrieve the inner dictionary associated with a specific building type from the outer dictionary.
+                inner_map = reduction_map.get(btype_key, {})
+                if not inner_map:
+                    logging.warning(f"No lighting reduction map found for {btype_key}")
+                
+                # Retrieve the reduction factor for the specified lighting level.
+                reduction_factor = inner_map.get(lighting_level, 1.0)
+                
+                if reduction_factor < 1.0:
+                    idf_model.apply_lighting_reduction(reduction_factor, btype_key)
+                elif reduction_factor >= 1.0 and lighting_level != 0 :
+                    logging.warning(f"Lighting reduction factor ({reduction_factor}) found is either invalid or not required for building type '{self.btype}' and level '{lighting_level}'. Lighting is not modified.")
+                
+            elif param_name in ['shgc', 'win_u', 'vt']:
+                # Process Window properties
+                win_u = params_dict.get('win_u', 0)
+                shgc = params_dict.get('shgc', 0)
+                vt = params_dict.get('vt', 0)
+                if win_u > 0 and shgc > 0:
+                    idf_model.apply_window_properties(win_u, shgc, vt)
+                elif win_u > 0:
+                    # Only update U-value while keeping SHGC and VT the same
+                    pass # Not implemented yet
+                elif shgc > 0:
+                    # Only update SHGC while keeping U-value and VT the same
+                    pass # Not implemented yet
+                elif vt > 0:
+                    # Only update VT while keeping U-value and SHGC the same
+                    pass # Not implemented yet
+
+    def _run_single_simulation_internal(self, params_dict: dict={}, run_id: str=None, is_baseline:bool=False, output_intermediary_files:bool=True):
+        """
+        Set up, execute, and analyze a single EnergyPlus simulation.
+
+        Args:
+            params_dict (dict, optional): A dictionary containing ECM parameter values. An empty dictionary signifies the baseline run. Defaults to {}.
+            run_id (str, optional): Run identifier for naming output subdirectories and file prefixes.. Defaults to None.
+            is_baseline (bool, optional): Explicitly designated as a benchmark run. Defaults to False.
+            output_intermediary_files (bool, optional): Whether to output intermediary files. Defaults to True.
+        """
+
+        run_label = str(run_id) if run_id is not None else 'baseline' if is_baseline else 'ecm_run'
+        run_dir = self.work_dir / run_label
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        run_idf_path = run_dir / f"{run_label}.idf"
+        run_output_prefix = run_label
+        floor_area = None
+
+        try:
+            # Copy the prototype IDF file to the run directory
+            shutil.copy(self.prototype_idf_path, run_idf_path)
+
+            # Load and Modify the IDF file
+            idf = IDFModel(str(run_idf_path))
+            idf.apply_run_peroid(self.config['simulation']['start_year'], self.config['simulation']['end_year'])
+            idf.apply_output_requests() # Apply standard output requests
+            idf.apply_simulation_control_settings()
+
+            if not is_baseline and params_dict:
+                self._apply_ecms_to_idf(idf, params_dict)
+            floor_area = idf.get_total_floor_area() # Get the total floor area
+            idf.save()
+
+            # Run EnergyPlus Simulation
+            success, message = self.runner.run_simulation(
+                idf_path=run_idf_path,
+                weather_path=self.weather_path,
+                output_dir=run_dir,
+                output_prefix=run_output_prefix,
+                config=self.config
+            )
+            
+            # Parse the simulation results
+            if success:
+                result_parser = SimulationResult(
+                    output_dir=run_dir,
+                    output_prefix=run_output_prefix
+                )
+                eui = result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
+                if eui is None:
+                    logging.error(f"Failed to calculate source EUI for run {run_label}")
+                if not output_intermediary_files:
+                    shutil.rmtree(run_dir, ignore_errors=True)
+                return eui, floor_area
+            else:
+                logging.error(f"Simulation failed for run {run_label}: {message}")
+                return None, floor_area
+        
+        except Exception as e:
+            logging.error(f"An error occurred while running simulation {run_label}: {e}")
+            shutil.rmtree(run_dir, ignore_errors=True)
+            return None, floor_area
+    
+    def run_baseline_simulation(self):
+        """
+        Run a baseline simulation and save EUI
+        """
+        logging.info(f"Running baseline simulation for {self.unique_id}")
+        self.baseline_eui, self.building_floor_area = self._run_single_simulation_internal(is_baseline=True, run_id="baseline")
+        if self.baseline_eui is not None:
+            logging.info(f"Baseline simulation completed successfully. Reference source EUI: {self.baseline_eui} kWh/m2/yr")
+        else:
+            logging.error(f"Baseline simulation failed for {self.unique_id}")
+        if self.building_floor_area is not None and self.building_floor_area > 0:
+            logging.info(f"Building floor area: {self.building_floor_area:.2f} m2")
+        else:
+            logging.warning(f"Warning: Unable to obtain a valid building floor area.")
+        return self.baseline_eui
+    
+    def _run_sensitivity_sample_point(self, params_array: np.ndarray, sample_index: int) -> dict|None:
+        """
+        Evaluating a single parameter set for sensitivity analysis.
+
+        Args:
+            params_array (np.ndarray): Array of parameters to analyze
+            sample_index (int): Index of the sample to analyze
+
+        Returns:
+            dict|None: A dictionary containing the parameters and resulting EUI, or None.
+        """
+        params_dict = self._params_array_to_dict(params_array)
+        run_id = f"sample_{sample_index}"
+        eui, _ = self._run_single_simulation_internal(params_dict=params_dict, run_id=run_id, output_intermediary_files=False)
+        logging.info(f"Completed sample {sample_index} with EUI: {eui}")
+        if eui is not None:
+            result_dict = params_dict.copy()
+            result_dict['eui'] = eui
+            return result_dict
+        else:
+            return None
+        
+    def _refill_continuous_space(self, continuous_samples: np.ndarray, discrete_results_df: pd.DataFrame) -> np.ndarray:
+        """
+        Find or estimate the corresponding Energy Use Intensity (EUI) for a continuous sample in Sobol analysis.
+
+        Args:
+            continuous_samples (np.ndarray): Array of continuous samples
+            discrete_results_df (pd.DataFrame): DataFrame containing the results of the discrete samples
+        
+        Returns:
+            np.ndarray: Array of EUI values
+        """
+
+        # Initialize an empty array to store the EUI values
+        num_continuous = continuous_samples.shape[0] # Get the number of continuous samples
+        Y = np.full(num_continuous, np.nan) # Initialize the EUI array with NaNs
+
+        # Create a lookup dictionary based on discrete parameter combinations for efficiency
+        discrete_lookup = {}
+        # Iterate through the discrete results DataFrame
+        for index,row in discrete_results_df.iterrows():
+            key = tuple(row[self.ecm_names].values)
+            discrete_lookup[key] = row['eui']
+        
+        for i in range(num_continuous):
+            discrete_params_list = []
+            # Iterate through each parameter
+            for j, param_name in enumerate(self.ecm_names):
+                # Mapping the continuous sample to a discrete value
+                discrete_val = self._continuous_to_discrete(continuous_samples[i, j], param_name)
+                discrete_params_list.append(discrete_val)
+            # Converting discrete parameter lists to tuples for lookups
+            discrete_key = tuple(discrete_params_list)
+            # Retrieving the EUI from the dictionary.
+            if discrete_key in discrete_lookup:
+                Y[i] = discrete_lookup[discrete_key]
+            else:
+                # If an exact match can't be found among the discrete results.
+                logging.warning(f"Warning: Exact match: {discrete_key} was not found for sample {i} in the discrete result. the EUI will be NaN.")
+        
+        # Check if any NaNs are present in the EUI array
+        nan_count = np.isnan(Y).sum()
+        if nan_count > 0:
+            logging.warning(f"Warning: {nan_count}/{num_continuous} consecutive samples failed to find the corresponding discrete EUI.")
+        
+        return Y
+    
+    def run_sensitivity_analysis(self):
+        """
+        Perform the Sobol sensitivity analysis process.
+        """
+        logging.info(f"--- {self.unique_id}: Run sensitivity analysis ---")
+        num_vars = len(self.ecm_names)
+        N_samples_base = self.config['analysis']['sensitivity_samples_n']
+        num_cpu = self.config['constants']['cpu_count_override']
+
+        # Define the Sobol Problem
+        problem = {
+            "num_vars": num_vars,
+            "names": self.ecm_names,
+            "bounds": [[0.0, 1.0] * num_vars]
+        }
+
+        # Generate continuous samples
+        param_values_continuous = saltelli.sample(problem, N_samples_base, calc_second_order=True)
+
+        # Transform the continuous samples to discrete samples
+        param_values_discrete_unique = set()
+        for i in range(param_values_continuous.shape[0]):
+            discrete_sample = tuple(self._continuous_to_discrete(param_values_continuous[i, j], name)
+                                    for j, name in enumerate(self.ecm_names))
+            param_values_discrete_unique.add(discrete_sample)
+        
+        param_values_discrete_list = [list(s) for s in param_values_discrete_unique]
+        num_unique_samples = len(param_values_discrete_list)
+        logging.info(f"Generated {param_values_continuous.shape[0]} continuous samples, which map to {num_unique_samples} unique discrete parameter combinations.")
+
+        # Run Simulation for Discrete Samples in Parallel
+        discrete_results_file = self.work_dir / 'sensitivity_discrete_results.csv'
+        if not discrete_results_file.exists():
+            # Set n_jobs to 1 if debug, otherwise use all cores.
+            n_jobs = 1 if self.config['constants']['debug'] else num_cpu
+
+            logging.info(f"Running {num_unique_samples} discrete sample simulations in parallel (using {n_jobs} cores)...")
+            results_list = Parallel(n_jobs=n_jobs, verbose=10)(
+                delayed(self._run_sensitivity_sample_point)(params, i)
+                for i, params in enumerate(param_values_discrete_list)
+            )
+
+            successful_results = [r for r in results_list if r is not None]
+            if not successful_results:
+                logging.error("No successful simulations completed during sensitivity analysis.")
+                return
+            
+            self.sensitivity_samples = pd.DataFrame(successful_results)
+            self.sensitivity_samples.to_csv(discrete_results_file, index=False)
+            logging.info(f"Discrete sensitivity analysis results saved to {discrete_results_file}")
+        else:
+            logging.info(f"Loading discrete sensitivity analysis results from {discrete_results_file}")
+            self.sensitivity_samples = pd.read_csv(discrete_results_file)
+
+        # Refilling the EUI for Continuous Sample Spaces.
+        logging.info("Re-populating the EUI of a continuous sample space for Sobol analysis...")
+        Y = self._refill_continuous_space(param_values_continuous, self.sensitivity_samples)
+        if np.isnan(Y).all():
+            logging.error("Error: Unable to locate EUIs for any consecutive samples, Sobol analysis cannot be performed.")
+            return
+
+        # Handle NaN in Y (e.g., remove corresponding samples or padding, choose remove here)
+        valid_indices = ~np.isnan(Y)
+        if not np.all(valid_indices):
+            logging.warning(f"Warning: {np.isnan(Y).sum()} samples with NaN EUI values were removed from the analysis.")
+            param_values_continuous_valid = param_values_continuous[valid_indices]
+            Y_valid = Y[valid_indices]
+            if len(Y_valid) < 2:
+                logging.error("Error: Not enough valid samples for Sobol analysis.")
+                return
+        else:
+            param_values_continuous_valid = param_values_continuous
+            Y_valid = Y
+
+        # Perform Sobol Analysis
+        logging.info("Performing Sobol sensitivity analysis...")
+        try:
+            Si = sobol.analyze(problem, Y_valid, calc_second_order=True, print_to_console=True)
+            self.sensitivity_results = Si
+        except Exception as e:
+            logging.error(f"Error: An issue arose while performing the Sobol analysis: {e}")
+            return
+
+        first_order = pd.Series(Si['S1'], index=problem['names'], name='S1')
+        total_order = pd.Series(Si['ST'], index=problem['names'], name='ST')
+        sensitivity_indices = pd.concat([first_order, total_order], axis=1)
+        si_file = self.work_dir / 'sensitivity_indices.csv'
+        sensitivity_indices.to_csv(si_file)
+        logging.info(f"Sobol sensitivity indices saved to {si_file}")
+        if 'S2' in Si and Si['S2'] is not None:
+            second_order = pd.DataFrame(Si['S2'], index=problem['names'], columns=problem['names'])
+            s2_file = self.work_dir / 'sensitivity_indices_S2.csv'
+            second_order.to_csv(s2_file)
+            logging.info(f"Sobol second-order sensitivity indices saved to {s2_file}")
+    
+    def build_surrogate_model(self, model_type: str=None):
+        """
+        Based on the sensitivity analysis, construct a surrogate model.
+
+        Args:
+            model_type (str, optional): Optimization model type. Defaults to None.
+        """
+        model_type = model_type if model_type else self.config['analysis']['optimization_model']
+        logging.info(f"Attempting to build a {model_type} surrogate model...")
+
+        if self.sensitivity_samples is None:
+            samples_file = self.work_dir / 'sensitivity_discrete_results.csv'
+            if samples_file.exists():
+                logging.info(f"Loading discrete sample data from file: {samples_file}")
+                self.sensitivity_samples = pd.read_csv(samples_file)
+            else:
+                logging.error("Error: Sensitivity analysis sample data not found; a surrogate model cannot be built.\
+                            Please run `run_sensitivity_analysis()` first.")
+                return
+        
+        # Preparing data for modeling (X: Parameters, Y: EUI).
+        df = self.sensitivity_samples.dropna(subset=['eui'])
+        X = df[self.ecm_names]
+        Y = df['eui']
+
+        if X.empty or Y.empty:
+            logging.error("Error: Unable to build a surrogate model due to missing sample data or an invalid EUI column.")
+            return
+    
+        model = None
+        summary_info = None
+        model_file = self.work_dir / f"surrogate_model_{model_type}.txt"
+
+        try:
+            if model_type.lower() == 'ols':
+                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
+                model = ols(formula, data=df).fit()
+                summary_info = model.summary().as_text()
+                with open(model_file, 'w') as f: f.write(summary_info)
+            elif model_type.lower() == 'rf':
+                model = RandomForestRegressor(n_estimators=self.config['analysis']['n_estimators'], random_state=self.config['analysis']['random_state'], n_jobs=self.config['constants']['cpu_count_override'])
+                model.fit(X, Y)
+                importances = pd.Series(model.feature_importances_, index=self.ecm_names).sort_values(ascending=False) # Extracting feature importance.
+                summary_info = importances.to_string()
+                importances.to_csv(model_file.with_name(model_file.stem + '_importance.csv'))
+                model_summary_file = model_file.with_name(model_file.stem + '_summary.txt')
+                with open(model_summary_file, 'w') as f:
+                    f.write(f"Random Forest Feature Importances:\n")
+                    f.write(summary_info)
+                    logging.info(f"Random Forest summary (importances) saved to {model_summary_file}")
+            else:
+                logging.warning(f"Warning: The surrogate model type '{model_type}' is not supported. Reverting to Ordinary Least Squares (OLS).")
+                formula = 'eui ~ ' + ' + '.join(self.ecm_names)
+                model = ols(formula, data=df).fit()
+                summary_info = model.summary().as_text()
+                with open(model_file.replace(f'_{model_type}.txt', '_ols.txt'), 'w') as f: f.write(summary_info)
+
+            self.surrogate_model = model
+            self.surrogate_model_summary = summary_info
+            logging.info(f"A surrogate model ({model_type}) has been successfully constructed, and a summary of its key information has been saved to: {model_file}.")
+        
+        except Exception as e:
+            logging.error(f"Error: An issue arose while building the surrogate model: {e}")
+            self.surrogate_model = None
+            self.surrogate_model_summary = None
+    
+    def optimize(self, model_type: str=None):
+        """
+        Employ surrogate modeling to pinpoint the optimal combination of ECM parameters for minimizing Energy Use Intensity (EUI).
+
+        Args:
+            model_type (str, optional): Optimization model type. Defaults to None.
+        """
+        model_type = model_type if model_type else self.config['analysis']['optimization_model']
+        logging.info(f"--- {self.unique_id}: Optimizing with a Surrogate Model ({model_type}) ---")
+
+        if self.surrogate_model is None:
+            logging.info("Info: The surrogate model hasn't been built yet; attempting to construct it now...")
+            self.build_surrogate_model(model_type=model_type)
+            if self.surrogate_model is None:
+                logging.error("Error: Unable to build agent model, optimization aborted.")
+            return
+        
+        # Define the objective function for the surrogate model
+        def objective_function(params_array: np.ndarray) -> float:
+            """
+            Surrogate model for predicting the EUI objective function.
+
+            Args:
+                params_array (np.ndarray): Array of parameters to evaluate
+
+            Returns:
+                float: Predicted EUI value
+            """
+            params_df = pd.DataFrame([params_array], columns=self.ecm_names)
+            try:
+                # Predict the EUI using the surrogate model
+                predicted_eui = self.surrogate_model.predict(params_df)
+                return float(predicted_eui[0]) if hasattr(predicted_eui, '__len__') else float(predicted_eui)
+            except Exception as e:
+                logging.warning(f"Warning: The surrogate model's prediction failed: {e}. Parameters: {params_array}. Returning the maximum value as a fallback.")
+                return float('inf')
+        
+        # Define the bounds for the optimization
+        bounds = [] 
+        initial_guess = []
+        for name in self.ecm_names:
+            levels = self.ecm_ranges[name]
+            bounds.append((min(levels), max(levels)))
+            # Set the initial guess to the midpoint of the range, or the first non-zero value encountered.
+            non_zero_levels = [l for l in levels if l != 0]
+            initial_guess.append(np.mean(levels) if not non_zero_levels else non_zero_levels[0])
+
+        # Perform the optimization
+        logging.info("Starting the optimization process...")
+        try:
+            result = minimize(
+                objective_function, # objective function
+                x0=initial_guess, # initial guess
+                method='L-BFGS-B', # optimization algorithm
+                bounds=bounds, # parameter bounds
+                options={'maxiter': 100} # optimization options
+            )
+
+            self.optimization_results = result
+
+            if result.success:
+                optimal_params_continuous = result.x
+                self.optimal_params = self._map_continuous_to_nearest_discrete(optimal_params_continuous) # Map the continuous parameters to the nearest discrete values.
+                # Leveraging a surrogate model to predict the EUI of discrete optima
+                self.optimal_eui_predicted = objective_function(list(self.optimal_params.values()))
+                logging.info(f"Optimization successful. Projected optimal EUI: {self.optimal_eui_predicted:.2f}")
+                logging.info("Optimal parameter set (discrete):")
+                for name, val in self.optimal_params.items():
+                    logging.info(f"{name}: {val:.2f}")
+            else:
+                logging.error(f"Optimization failed. Reason: {result.message}")
+                self.optimal_params = None
+                self.optimal_eui_predicted = None
+        except Exception as e:
+            logging.error(f"Error: An issue arose while optimizing: {e}")
+            self.optimal_params = None
+            self.optimal_eui_predicted = None
+
+    def _map_continuous_to_nearest_discrete(self, continuous_params: np.ndarray) -> dict:
+        """
+        Maps the continuous optimization results to the nearest permissible discrete value for each parameter.
+
+        Args:
+            continuous_params (np.ndarray): Continuous parameter values from the optimization results.
+
+        Returns:
+            dict: Dictionary containing the optimal parameter values mapped to the nearest discrete values.
+        """
+        discrete_params = {}
+        for i, name in enumerate(self.ecm_names):
+            continuous_val = continuous_params[i]
+            discrete_levels = self.ecm_ranges[name]
+            nearest_discrete_val = min(discrete_levels, key=lambda x: abs(x - continuous_val))
+            discrete_params[name] = nearest_discrete_val
+        return discrete_params
+    
+    def validate_optimum(self):
+        """
+        Execute EnergyPlus simulations with optimized parameters to validate the predicted results.
+        """
+        if self.optimal_params is None:
+            logging.error("Error: Optimization parameters not found; verification cannot proceed. Please run `optimize()` first.")
+            return
+        
+        logging.info(f"--- {self.unique_id}: Validating the optimal parameter set ---")
+        self.optimal_eui_simulated, floor_area = self._run_single_simulation_internal(
+            params_dict=self.optimal_params,
+            run_id=f"optimized",
+        )
+        if floor_area is not None and floor_area > 0:
+            self.building_floor_area = floor_area # Update the building floor area
+
+        if self.optimal_eui_simulated:
+            logging.info(f"Optimal Simulated EUI: {self.optimal_eui_simulated:.2f} kWh/m².")
+
+            if self.optimal_eui_predicted:
+                self.optimization_bias = abs(self.optimal_eui_simulated - self.optimal_eui_predicted) / self.optimal_eui_simulated * 100
+                logging.info(f"Optimization bias: {self.optimization_bias:.2f}%")
+            else:
+                logging.warning("Warning: The predicted EUI is not available. The bias cannot be calculated.")
+
+            if not self.baseline_eui:
+                logging.info("Info: The baseline EUI hasn't been calculated. Attempting to run it now...")
+                self.run_baseline_simulation()
+            
+            if self.baseline_eui and self.baseline_eui > 0:
+                self.optimization_improvement = (self.baseline_eui - self.optimal_eui_simulated) / self.baseline_eui * 100
+                logging.info(f"Info: EUI Improvement (Relative to Baseline): {self.optimization_improvement:.2f}%")
+
+            elif self.baseline_eui == 0:
+                logging.warning("Warning: Improvement rate cannot be calculated (baseline EUI is zero).")
+            else:
+                logging.warning("Warning: The baseline EUI is not available. The improvement rate cannot be calculated.")
+        else:
+            logging.warning("Warning: The optimal EUI simulation failed. The validation cannot be performed.")
+
+    def run_pv_analysis(self):
+        """Find suitable surfaces, add PV, run simulation, and calculate net EUI."""
+        if not self.config.get('pv_analysis', {}).get('enabled', False):
+            logging.info(f"--- {self.unique_id}: PV analysis is disabled ---")
+            return
+        if self.optimal_eui_simulated is None and self.optimal_params is None:
+            logging.error(f"Error: Optimization or validation not completed, cannot perform PV analysis.")
+            return
+        if self.building_floor_area is None or self.building_floor_area <= 0:
+            logging.error(f"Error: Missing valid floor area, cannot calculate net EUI.")
+            return
+        logging.info(f"--- {self.unique_id}: Starting PV analysis ---")
+        try:
+            optimized_idf_obj_path = self.work_dir / "optimized" / "optimized.idf"
+            if not optimized_idf_obj_path.exists():
+                logging.error(f"Error: Verified optimized IDF not found: {optimized_idf_obj_path}")
+                return
+            optimized_idf_model = IDFModel(optimized_idf_obj_path) # Load the verified optimized IDF
+            pv_manager = PVManager(optimized_idf_model=optimized_idf_model, runner=self.runner, config=self.config,
+                                   weather_path=self.weather_path, base_work_dir=self.work_dir)
+            self.suitable_surfaces = pv_manager.find_suitable_surfaces() # Find surfaces
+
+            if self.suitable_surfaces:
+                pv_run_id = "optimized_pv"
+                self.pv_idf_path = pv_manager.add_pv_to_idf(self.suitable_surfaces, pv_run_id) # Add PV
+                if self.pv_idf_path:
+                    pv_output_dir = self.work_dir / pv_run_id
+                    pv_output_prefix = self.config['pv_analysis'].get('pv_output_prefix', 'pv')
+                    success, message = self.runner.run_simulation( # Run the PV simulation
+                        idf_path=self.pv_idf_path, weather_path=self.weather_path,
+                        output_dir=pv_output_dir, output_prefix=pv_output_prefix, config=self.config)
+                    if success:
+                        self.pv_generation_results = pv_manager.analyze_pv_generation(pv_output_prefix) # Analyze the PV generation
+                        pv_result_parser = SimulationResult(pv_output_dir, pv_output_prefix) # Get the total EUI
+                        self.gross_eui_with_pv = pv_result_parser.get_source_eui(self.config['constants']['ng_conversion_factor'])
+                        if self.gross_eui_with_pv is not None and self.pv_generation_results is not None:
+                            total_pv_kwh = self.pv_generation_results.get('total_annual_kwh', 0.0)
+                            pv_kwh_per_m2 = total_pv_kwh / self.building_floor_area # Calculate the PV generation intensity
+                            self.net_eui_with_pv = self.gross_eui_with_pv - pv_kwh_per_m2 # Calculate the net EUI
+                            self.optimization_improvement_with_pv = (self.baseline_eui - self.net_eui_with_pv) / self.baseline_eui * 100
+                            logging.info(f"Gross EUI with PV: {self.gross_eui_with_pv:.2f} kWh/m2")
+                            logging.info(f"Annual PV generation: {total_pv_kwh:.2f} kWh ({pv_kwh_per_m2:.2f} kWh/m2)")
+                            logging.info(f"Net source EUI (Net): {self.net_eui_with_pv:.2f} kWh/m2")
+                        else: logging.warning("Warning: Unable to obtain the total EUI with PV or PV generation data, unable to calculate the net EUI.")
+                    else:
+                        logging.error(f"Error: Final PV simulation failed: {message}")
+                else:
+                    logging.error("Error: Failed to add PV to IDF.")
+            else:
+                logging.info("Info: No suitable surfaces found for PV installation. Skipping PV simulation.")
+                self.net_eui_with_pv = self.optimal_eui_simulated
+        except Exception as e:
+            logging.error(f"Error: An issue arose while executing the PV analysis: {e}")
+            import traceback; traceback.print_exc()
+    
+    def save_results(self):
+        """
+        Save key results from the process to a file 
+        """
+        results_data = {
+            "city": self.city,
+            "ssp": self.ssp,
+            "btype": self.btype,
+            'building_floor_area_m2': self.building_floor_area,
+            "baseline_eui": self.baseline_eui,
+            "optimal_params": self.optimal_params,
+            "optimal_eui_predicted": self.optimal_eui_predicted,
+            "optimal_eui_simulated": self.optimal_eui_simulated,
+            "optimization_improvement_percent": self.optimization_improvement,
+            "optimization_bias_percent": self.optimization_bias,
+            'pv_analysis_enabled': self.config.get('pv_analysis', {}).get('enabled', False),
+            'suitable_surfaces_for_pv': self.suitable_surfaces,
+            'pv_generation_analysis': self.pv_generation_results,
+            'gross_eui_with_pv': self.gross_eui_with_pv,
+            'net_eui_with_pv': self.net_eui_with_pv,
+            'optimization_improvement_with_pv': self.optimization_improvement_with_pv,
+            "sensitivity_indices": self.sensitivity_results,
+        }
+        result_file = self.work_dir / "pipeline_results.json"
+        try:
+            def numpy_converter(obj): # Process NumPy types
+                if isinstance(obj, np.integer): return int(obj)
+                elif isinstance(obj, np.floating): return float(round(obj, 6)) if not np.isnan(obj) else "NaN"
+                elif isinstance(obj, np.ndarray): return obj.tolist()
+                elif isinstance(obj, (np.bool_, bool)): return bool(obj)
+                elif pd.isna(obj): return "NaN"
+                # Process NumPy arrays in SALib output dictionaries
+                if isinstance(obj, dict):
+                    return {k: numpy_converter(v) for k, v in obj.items()}
+                return '<not serializable>'
+            with open(result_file, "w") as f:
+                json.dump(results_data, f, indent=4, default=numpy_converter)
+            logging.info(f"Optimization results saved to {result_file}")
+        except Exception as e:
+            logging.error(f"Error: Failed to save results to {result_file}: {e}")
+
+    def run_full_pipeline(self, run_sens:bool=True, build_model:bool=True, run_opt=True, validate=True, run_pv=True, save=True):
+        """
+        Execute each stage of the entire optimization process sequentially.
+
+        Args:
+            run_sens (bool, optional): Run the sensitivity analysis. Defaults to True.
+            build_model (bool, optional): Build the surrogate model. Defaults to True.
+            run_opt (bool, optional): Run the optimization. Defaults to True.
+            validate (bool, optional): Validate the results. Defaults to True.
+            save (bool, optional): Save the results. Defaults to True.
+        """
+        logging.info(f"======== Start processing: {self.unique_id} ========")
+        if self.run_baseline_simulation() is None and (run_sens or validate):
+            logging.error("Error: The baseline EUI hasn't been calculated. The pipeline cannot proceed.")
+            return
+        
+        if run_sens:
+            self.run_sensitivity_analysis()
+            if self.sensitivity_results is None:
+                logging.error("Error: Sensitivity analysis failed, subsequent steps may be impacted.")
+        
+        if build_model:
+            self.build_surrogate_model()
+            if self.surrogate_model is None:
+                logging.error("Error: The attempt to build a surrogate model has failed, precluding optimization and validation.")
+
+        if run_opt:
+            self.optimize()
+            if self.optimization_results is None:
+                logging.error("Error: Optimization failed, preventing validation from proceeding.")
+                return 
+        
+        if validate:
+            self.validate_optimum()
+            if self.optimal_eui_simulated is None and run_pv:
+                logging.error("Error: Optimization validation failed, aborting PV analysis.")
+                return
+
+        if run_pv and self.config.get('pv_analysis', {}).get('enabled', False): # Check if PV analysis is enabled in the configuration
+            self.run_pv_analysis()
+        
+        if save:
+            self.save_results()
+        
+        logging.info(f"======== End processing: {self.unique_id} ========")
+</file>
+
+<file path="backend/services/idf_service.py">
+# backend/services/idf_service.py
+"""Service module for handling EnergyPlus IDF file uploads, storage, and retrieval."""
+
+import logging
+from pathlib import Path
+from eppy.modeleditor import IDF
+
+# Define the path to the EnergyPlus Data Dictionary file.
+IDD_FILE = Path(__file__).parent.parent.parent / "data" / "Energy+.idd"
+# Set the IDD file path for the eppy library globally.
+IDF.setiddname(str(IDD_FILE))  # Convert Path object to string
+
+# IDF Model operation Class
+
+
+class IDFModel:
+    """
+    Encapsulates the reading, modification, and saving of EnergyPlus IDF files, leveraging the eppy library.
+    """
+
+    def __init__(self, idf_path: str, eppy_idf_object: IDF = None):
+        """
+        Initialize the IDFModel object with an optional IDF path or eppy IDF object.
+
+        Args:
+            idf_path (str): The path to the IDF file.
+            eppy_idf_object (IDF, optional): An existing eppy IDF object. Defaults to None.
+        """
+        self.idf_path = idf_path
+
+        if eppy_idf_object is None:
+            try:
+                self.idf = IDF(self.idf_path)
+            except Exception as e:
+                raise ValueError(f"Failed to create IDF object from path: {e}")
+        else:
+            self.idf = eppy_idf_object
+        self._zone_names = None
+        self._floor_area = None
+
+    def save(self, output_path: str = None):
+        """
+        Save the IDF object to a file.
+
+        Args:
+            output_path (str, optional): Destination path for saving. If None, overwrite the original file.
+        """
+        save_path = output_path if output_path else self.idf_path
+        try:
+            self.idf.saveas(save_path)
+        except Exception as e:
+            raise ValueError(f"Failed to save IDF object to {save_path}: {e}")
+
+    def apply_run_peroid(self, start_year: int = None, end_year: int = None):
+        """
+        Add or remove a RunPeriod.
+
+        Args:
+            start_year (int, optional): Start year. Defaults to None.
+            end_year (int, optional): End year. Defaults to None.
+        """
+        run_periods = self.idf.idfobjects.get("RunPeriod", [])
+
+        # Setting the Start Date And End Date
+        if start_year and end_year:
+            logging.info(f"Configure the RunPeriod to explicitly specify the years: {start_year}-{end_year}.")
+        else:
+            start_year = 2025
+            end_year = 2025
+
+        if len(run_periods) > 0:
+            for rp in run_periods[1:]:
+                self.idf.removeidfobject(rp)
+
+        if not run_periods:
+            rp = self.idf.newidfobject(
+                "RunPeriod",
+                Name=f"RunPeriod_{start_year}_{end_year}",
+            )
+        else:
+            rp = run_periods[0]
+
+        # Set the RunPeriod filed
+        rp.Begin_Month = 1
+        rp.Begin_Day_of_Month = 1
+        rp.Begin_Year = start_year
+        rp.End_Month = 12
+        rp.End_Day_of_Month = 31
+        rp.End_Year = end_year
+        # Leverage Weather File Holidays
+        rp.Use_Weather_File_Holidays_and_Special_Days = "Yes"
+        # Leverage Weather File Daylight Saving Period
+        rp.Use_Weather_File_Daylight_Saving_Period = "Yes"
+        rp.Apply_Weekend_Holiday_Rule = "No"  # Don't apply weekend holiday rule
+        # Leverage Weather File Rain Indicators
+        rp.Use_Weather_File_Rain_Indicators = "Yes"
+        # Leverage Weather File Snow Indicators
+        rp.Use_Weather_File_Snow_Indicators = "Yes"
+        # Or "Monday", "Tuesday", etc.
+        rp.Day_of_Week_for_Start_Day = "Monday"
+        if hasattr(rp, 'Use_Weather_File_for_Run_Period_Calculation'):
+            rp.Use_Weather_File_for_Run_Period_Calculation = "No"
+        logging.info(f"RunPeriod {rp.Name} created successfully.")
+
+    def apply_output_requests(self):
+        """
+        Configure output variables and reporting for the IDF object.
+        """
+        # --- 1. Clean up existing output related objects ---
+        objects_to_remove = [
+            "OutputControl:Table:Style",
+            "Output:Table:SummaryReports",
+            "Output:Table:Monthly",          # Clear custom monthly table.
+            "Output:Table:Annual",           # Clear custom annual table.
+            "Output:Table:TimeBins",         # Clear custom time bins table.
+            "Output:Meter",                  # Clear meters to .eso and .mtr.
+            "Output:Meter:MeterFileOnly",    # Clear meters to .mtr only.
+            "Output:Meter:Cumulative",       # Clear cumulative meters.
+            # Clear cumulative meters to .mtr only.
+            "Output:Meter:Cumulative:MeterFileOnly",
+            # Clear all variable requests. (Note: PV variables need to be added separately)
+            "Output:Variable",
+            "Output:SQLite",               # QLite output
+            "Output:JSON",                 # SON output
+            "Output:VariableDictionary",   # RDD/MDD files
+        ]
+        self.remove_objects_by_type(objects_to_remove)
+        logging.info("Finished removing existing output related objects.")
+
+        # --- 2. Configure table output styles (for *Table.csv) ---
+        # Create a new output control table style (comma separated values, J to kWh)
+        self.idf.newidfobject(
+            "OutputControl:Table:Style",
+            Column_Separator="Comma",
+            Unit_Conversion="JtokWh"
+        )
+        logging.info("Set OutputControl:Table:Style to Comma and JtokWh.")
+
+        # --- 3. Request predefined summaries and monthly reports (written to *Table.csv) ---
+        # Create a new output table summary report
+        summary_reports_object = self.idf.newidfobject(
+            "Output:Table:SummaryReports",
+        )
+        reports_to_request = [
+            # Annual building performance summary (includes total energy consumption, EUI, etc.)
+            "AnnualBuildingUtilityPerformanceSummary",
+            # Input verification and results summary (check if the model setup is reasonable)
+            "InputVerificationandResultsSummary",
+            # Source energy by end-use (understand the energy source composition)
+            "SourceEnergyEndUseComponentsSummary",
+            # Site energy by end-use (understand the building internal energy consumption distribution)
+            "DemandEndUseComponentsSummary",
+            # "ComponentSizingSummary",                  # Component sizing summary (HVAC equipment sizing)
+            "SurfaceShadowingSummary",                 # Surface shadowing summary
+            # "HVACSizingSummary",                       # HVAC system sizing summary
+            # Energy meters summary (provide an overview of the main meters)
+            "EnergyMeters",
+
+            # --- 以下为月度报告精选 ---
+            # Monthly electricity and natural gas consumption total
+            "EnergyConsumptionElectricityNaturalGasMonthly",
+            # Monthly electricity consumption by end-use (lighting, equipment, fans, cooling, etc.)
+            "EndUseEnergyConsumptionElectricityMonthly",
+            # Monthly natural gas consumption by end-use (heating, hot water, etc.)
+            "EndUseEnergyConsumptionNaturalGasMonthly",
+            # "EnergyConsumptionDistrictHeatingCoolingMonthly", # If using district heating/cooling, uncomment this
+            # "ZoneSensibleHeatGainSummaryMonthly",        # Monthly zone sensible heat gain summary
+            # "ZoneSensibleHeatLossSummaryMonthly",        # Monthly zone sensible heat loss summary
+            "ZoneCoolingSummaryMonthly",                 # Monthly zone cooling load summary
+            "ZoneHeatingSummaryMonthly",                 # Monthly zone heating load summary
+            # "ComfortReportSimple55Monthly",              # Simple comfort report based on ASHRAE 55
+            # "OutdoorAirSummary",                         # Outdoor air summary
+        ]
+        for i, report_name in enumerate(reports_to_request):
+            field_name = f"Report_{i+1}_Name"
+            if field_name not in summary_reports_object.fieldnames:
+                pass
+            try:
+                setattr(summary_reports_object, field_name, report_name)
+                logging.info(f"Requested summary report: {report_name}")
+            except Exception as e:
+                logging.error(
+                    f"Failed to set field {field_name} for Output:Table:SummaryReports. Error: {e}. This might indicate an issue with eppy's extensible field handling for this specific object or exceeding a predefined limit.")
+
+        logging.info(
+            f"Requested {len(reports_to_request)} summary/monthly reports for tabular output.")
+
+        # --- 4. Request-by-request meter data ---
+        meters_to_add = [
+            # --- Power consumption End Use ---
+            # Electricity for Indoor Lighting
+            ("InteriorLights:Electricity", "Hourly"),
+            # Electricity for Indoor Equipment
+            ("InteriorEquipment:Electricity", "Hourly"),
+            # Electricity for Fans
+            ("Fans:Electricity", "Hourly"),
+            # Electricity for Cooling Systems (includes DX coils, chillers, etc.)
+            ("Cooling:Electricity", "Hourly"),
+            # Electricity for Pumps
+            ("Pumps:Electricity", "Hourly"),
+            # Electricity for Heating Systems (if using electric heating)
+            ("Heating:Electricity", "Hourly"),
+            # ("ExteriorLights:Electricity", "Hourly"),     # Electricity for Outdoor Lighting (if model has outdoor lighting)
+            # ("Refrigeration:Electricity", "Hourly"),      # Electricity for Refrigeration Equipment (if separately modeled)
+            # ("HeatRejection:Electricity", "Hourly"),      # Electricity for Heat Rejection Equipment (如冷却塔风扇)
+            # ("Humidifier:Electricity", "Hourly"),         # Electricity for Humidifiers
+            # ("HeatRecovery:Electricity", "Hourly"),       # Electricity for Heat Recovery Equipment
+
+            # --- Natural Gas Consumption End Use ---
+            # Natural Gas for Heating
+            ("Heating:NaturalGas", "Hourly"),
+            # Natural Gas for Water Heating
+            ("Water Heater:WaterSystems:NaturalGas", "Hourly"),
+            # Natural Gas for Indoor Equipment
+            ("InteriorEquipment:NaturalGas", "Hourly"),
+
+            # --- Other Fuels ---
+            # ("Heating:FuelOilNo1", "Hourly"),             # Heating Fuel Oil No. 1
+            # ("Heating:Propane", "Hourly"),                # Heating Propane
+            # ("Heating:Diesel", "Hourly"),                 # Heating Diesel
+
+            # --- District Heating/Cooling ---
+            # ("DistrictCooling:Facility", "Hourly"),       # District Cooling Total Consumption
+            # ("DistrictHeating:Facility", "Hourly"),       # District Heating Total Consumption
+
+            # --- Facility Level Meters ---
+            # Total Building Electricity Consumption (Grid Input)
+            ("Electricity:Facility", "Hourly"),
+            # Total Building Natural Gas Consumption
+            ("NaturalGas:Facility", "Hourly"),
+            # Total Building Water Consumption
+            ("Water:Facility", "Hourly"),
+            # Total Building Electricity Production (e.g., PV generation)
+            ("ElectricityProduced:Facility", "Hourly"),
+
+            # --- Energy Transfer Related ---
+            # Heating Energy Transfer
+            ("Heating:EnergyTransfer", "Hourly"),
+            # Cooling Energy Transfer
+            ("Cooling:EnergyTransfer", "Hourly"),
+            # Building Total Energy Transfer
+            ("EnergyTransfer:Building", "Hourly"),
+            # HVAC System Energy Transfer
+            ("EnergyTransfer:HVAC", "Hourly"),
+        ]
+
+        added_meters_count = 0
+        for meter_name, frequency in meters_to_add:
+            existing = self.idf.getobject(
+                "Output:Meter:MeterFileOnly".upper(), meter_name)
+            if existing:
+                logging.info(f"Meter {meter_name} already exists.")
+            else:
+                self.idf.newidfobject(
+                    "Output:Meter:MeterFileOnly",
+                    Key_Name=meter_name,
+                    Reporting_Frequency=frequency
+                )
+                added_meters_count += 1
+        output_control_list = [
+            "Output_SQLite",
+            # "Output:JSON",
+        ]
+        self.idf.newidfobject("OutputControl:Files", **{f"{output_control}":'Yes' for output_control in output_control_list})
+        logging.info(f"Requested {added_meters_count} hourly meters (output to *.mtr and affects readvars *.csv).")
+
+    def apply_simulation_control_settings(self, run_for_sizing: bool = False, run_for_weather=True):
+        """
+        Configure simulation control settings for the IDF object.
+
+        Args:
+            run_for_sizing (bool, optional): Whether to run for sizing. Defaults to False.
+            run_for_weather (bool, optional): Whether to run for weather. Defaults to True.
+        """
+        sim_control_list = self.idf.idfobjects.get("SimulationControl", [])
+        if sim_control_list:
+            sim_control = sim_control_list[0]
+            sim_control.Run_Simulation_for_Sizing_Periods = 'Yes' if run_for_sizing else 'No'
+            sim_control.Run_Simulation_for_Weather_File_Run_Periods = 'Yes' if run_for_weather else 'No'
+
+            # Log the changes
+            logging.info("Applied simulation control settings to IDF object.")
+        else:
+            logging.warning("SimulationControl object not found in IDF.")
+
+    def remove_objects_by_type(self, object_type_list: list[str]):
+        """
+        Remove specific object types from the IDF object.
+
+        Args:
+            object_type_list (list[str]): Contains the object types to be removed.
+        """
+        for obj_type in object_type_list:
+            objects = self.idf.idfobjects.get(obj_type.upper(), [])
+            for obj in objects:
+                self.idf.removeidfobject(obj)
+            logging.info(f"Removed {len(objects)} objects of type: {obj_type}")
+
+    def get_zone_names(self):
+        """
+        Get the names of all zones in the IDF object.
+
+        Returns:
+            list[str]: A list of zone names.
+        """
+        if self._zone_names is None:
+            zones = self.idf.idfobjects.get("ZONE", [])
+            self._zone_names = [zone.Name for zone in zones]
+        return self._zone_names
+
+    def apply_wall_insulation(self, r_value_si: float):
+        """
+        Apply wall insulation to exterior walls and roofs in the IDF object.
+
+        Args:
+            r_value_si (float): The R-value in SI units (m2K/W).
+        """
+        if r_value_si <= 0:
+            raise ValueError("Wall insulationR-value must be greater than 0.")
+
+        # Define the wall insulation material
+        insu_mat_name = f"ExteriorInsulation_R{r_value_si}"
+        self.idf.newidfobject(
+            "Material:NoMass",
+            Name=insu_mat_name,
+            Roughness="Smooth",  # Default roughness for insulation
+            Thermal_Resistance=r_value_si,  # R-value in SI units
+            Thermal_Absorptance=0.9,  # Default absorptance for insulation
+            Solar_Absorptance=0.6,  # Default Solar Absorptance
+            Visible_Absorptance=0.7,  # Default Visible Absorptance
+        )
+
+        # Define the schedule for the insulation
+        sched_name = "WallInsuSched_AlwaysOn"  # Name of the schedule
+        # Check if the schedule already exists
+        if not self.idf.getobject("Schedule:Constant", sched_name):
+            self.idf.newidfobject(
+                "Schedule:Compact",
+                Name=sched_name,
+                Schedule_Type_Limits_Name="Fraction",
+                Field_1="Through: 12/31",
+                Field_2="For: AllDays",
+                Field_3="Until: 24:00",
+                Field_4="1.0",
+            )
+
+        # Search all exterior walls and roofs
+        surfaces = self.idf.idfobjects.get("BuildingSurface:Detailed", [])
+        exterior_surfaces = []
+        for surf in surfaces:
+            if surf.Outside_Boundary_Condition.upper() == "OUTDOORS" and \
+                    surf.Surface_Type.upper() in ["WALL", "ROOF"]:
+                exterior_surfaces.append(surf.Name)
+
+        # Apply Moveable Insulation to all exterior surfaces
+        # Remove existing movable insulation objects
+        self.remove_objects_by_type(['SurfaceControl:MovableInsulation'])
+        for surf_name in exterior_surfaces:
+            self.idf.newidfobject(
+                "SurfaceControl:MovableInsulation",
+                Insulation_Type="Outside",
+                Surface_Name=surf_name,
+                Material_Name=insu_mat_name,
+                Schedule_Name=sched_name
+            )
+
+        # Log the changes
+        logging.info(
+            f"Applied insulation to {len(exterior_surfaces)} surfaces.")
+
+    def apply_air_infiltration(self, ach_rate: float):
+        """
+        Apply air infiltration(ACH) to all zones in the IDF object.
+
+        Args:
+            ach_rate (float): Air change per Hour (Times/Hour)
+        """
+
+        # Remove existing Air Infiltration objects
+        self.remove_objects_by_type([
+            "ZoneInfiltration:DesignFlowRate"
+        ])
+
+        # Define the schedule for the infiltration
+        sched_name = "InfilSched_AlwaysOn"
+        if not self.idf.getobject("Schedule:Constant", sched_name):
+            self.idf.newidfobject(
+                "Schedule:Compact",
+                Name=sched_name,
+                Schedule_Type_Limits_Name="Fraction",
+                Field_1="Through: 12/31",
+                Field_2="For: AllDays",
+                Field_3="Until: 24:00",
+                Field_4="1.0",
+            )
+
+        # Apply Air Infiltration to all zones
+        zoom_names = self.get_zone_names()
+        for i, zone_name in enumerate(zoom_names):
+            infiltration_object_name = f"ZoneInfil_{zone_name.replace(' ', '_')}"
+            self.idf.newidfobject(
+                "ZoneInfiltration:DesignFlowRate",
+                Name=infiltration_object_name,
+                Zone_or_ZoneList_or_Space_or_SpaceList_Name=zone_name,
+                Schedule_Name=sched_name,
+                Design_Flow_Rate_Calculation_Method="AirChanges/Hour",  # Air Changes per Hour
+                Air_Changes_per_Hour=ach_rate,
+            )
+
+        # Log the changes
+        logging.info(f"Applied air infiltration to {len(zoom_names)} zones.")
+
+    def apply_window_properties(self, u_value: float, shgc: float, vt: float):
+        """
+        Modify window properties for all windows in the IDF object.
+        Create new window material and assign to all windows in FenestrationSurface:Detailed.
+
+        Args:
+            u_value (float): Window U-value (W/m2K)
+            shgc (float): Window Solar Heat Gain Coefficient
+            vt (float): Window Visible Transmittance
+        """
+
+        if u_value <= 0 or shgc <= 0:
+            return
+
+        # Create a new window material
+        # Define the new material name
+        new_glazing_material_name = f"SimpleGlazing_U{u_value}_SHGC{shgc}"
+        # Check if the material already exists
+        existing_materials = self.idf.getobject(
+            'WindowMaterial:SimpleGlazingSystem', new_glazing_material_name)
+        if not existing_materials:
+            self.idf.newidfobject(
+                'WindowMaterial:SimpleGlazingSystem',
+                Name=new_glazing_material_name,
+                UFactor=u_value,
+                Solar_Heat_Gain_Coefficient=shgc,
+                Visible_Transmittance=vt
+            )
+
+        # Create a new window construction
+        new_construction_name = f"Construction_Window_{new_glazing_material_name}"
+        existing_construction = self.idf.getobject(
+            'Construction', new_construction_name)
+        if not existing_construction:
+            self.idf.newidfobject(
+                "Construction",
+                Name=new_construction_name,
+                Outside_Layer=new_glazing_material_name
+            )
+
+        # Get all FenestrationSurface:Detailed objects of type Window
+        fenestration_surfaces = self.idf.idfobjects.get(
+            "FenestrationSurface:Detailed", [])
+        window_count = 0
+        for fen_surf in fenestration_surfaces:
+            if fen_surf.Surface_Type.upper() == "WINDOW":
+                fen_surf.Construction_Name = new_construction_name
+                window_count += 1
+
+        # Log the changes
+        logging.info(f"Applied window properties to {window_count} windows.")
+
+    def apply_cooling_cop(self, cop: float):
+        """
+        Change the cooling COP for all cooling systems in the IDF object.
+
+        Args:
+            cop (float): Cooling COP
+        """
+        if cop <= 0:
+            return  # Return if COP is not positive
+
+        modified_count = 0
+        # Example modified Single-Speed DX Cooling coil
+        dx_coils = self.idf.idfobjects.get('Coil:Cooling:DX:SingleSpeed', [])
+        for coil in dx_coils:
+            # Assume COP field name is 'Rated_COP' (need to check IDD for confirmation)
+            # Check if the coil has a Gross_Rated_Cooling_COP attribute
+            if hasattr(coil, 'Gross_Rated_Cooling_COP'):
+                coil.Gross_Rated_Cooling_COP = cop
+                modified_count += 1
+
+        # Example modified Chiller:Electric:EIR
+        chillers = self.idf.idfobjects.get('Chiller:Electric:EIR', [])
+        for chiller in chillers:
+            # Assume COP field name is 'Reference_COP' (need to check IDD for confirmation)
+            if hasattr(chiller, 'Reference_COP'):
+                chiller.Reference_COP = cop
+                modified_count += 1
+
+        # Log the changes
+        logging.info(
+            f"Applied cooling COP to {modified_count} cooling systems.")
+
+    def apply_cooling_supply_temp(self, temp_celsius: float):
+        """
+        Modify the cooling supply temperature for all Sizing:Zone objects in the IDF object.
+
+        Args:
+            temp_celsius (float): Cooling supply temperature in Celsius
+        """
+        if temp_celsius <= 0:
+            return  # Return if temperature is not positive
+
+        sizing_zone_objects = self.idf.idfobjects.get('Sizing:Zone', [])
+        modified_count = 0
+        for sz in sizing_zone_objects:
+            if hasattr(sz, 'Zone_Cooling_Design_Supply_Air_Temperature'):
+                sz.Zone_Cooling_Design_Supply_Air_Temperature = temp_celsius
+                modified_count += 1
+        if modified_count == 0:
+            logging.warning("No Sizing:Zone objects found in IDF.")
+        else:
+            logging.info(
+                f"Applied cooling supply temperature to {modified_count} Sizing:Zone objects.")
+
+    def apply_lighting_reduction(self, reduction_factor: float, btype: str):
+        """
+        Modify the lighting reduction factor for all Lights objects in the IDF object.
+
+        Args:
+            reduction_factor (float): Lighting reduction factor
+            btype (str): Building type (dosen't matter for now)
+        """
+        if reduction_factor <= 0 or reduction_factor >= 1:
+            return  # Return if reduction factor is not between 0 and 1
+
+        # Get all Lights objects
+        lights_objects = self.idf.idfobjects.get('Lights', [])
+        modified_count = 0
+        for light in lights_objects:
+            calc_method = light.Design_Level_Calculation_Method.upper()
+
+            if calc_method == "LIGHTINGLEVEL":  # Based on absolute power
+                if hasattr(light, 'Lighting_Level') and light.Lighting_Level > 0:
+                    original_level = light.Lighting_Level
+                    light.Lighting_Level = original_level * reduction_factor
+                    modified_count += 1
+            elif calc_method == "WATTS/AREA":  # Based on watts per square meter
+                if hasattr(light, 'Watts_per_Floor_Area') and light.Watts_per_Floor_Area > 0:
+                    original_wpa = light.Watts_per_Floor_Area
+                    light.Watts_per_Floor_Area = original_wpa * reduction_factor
+                    modified_count += 1
+            elif calc_method == "WATTS/PERSON":  # Based on watts per person
+                if hasattr(light, 'Watts_per_Person') and light.Watts_per_Person > 0:
+                    original_wpp = light.Watts_per_Person
+                    light.Watts_per_Person = original_wpp * reduction_factor
+                    modified_count += 1
+            else:
+                logging.warning(
+                    f"Unsupported lighting calculation method: {calc_method} for light: {light.Name}")
+
+        if modified_count == 0:
+            logging.warning("No Lights objects found in IDF.")
+        else:
+            logging.info(
+                f"Applied lighting reduction to {modified_count} Lights objects.")
+
+    def apply_natural_ventilation(self, opening_area_m2: float):
+        """
+        Apply natural ventilation to all zones in the IDF object.
+
+        Args:
+            opening_area_m2 (float): Effective Opening area for each zone (m2).
+        """
+
+        if opening_area_m2 <= 0:
+            return  # Return if opening area is not positive
+
+        # Remove existing AirflowNetwork:Distribution objects
+        self.remove_objects_by_type(['ZoneVentilation:WindandStackOpenArea'])
+
+        # Define the schedule for the natural ventilation
+        sched_name = "NatVentSched_AlwaysOn"
+        if not self.idf.getobject("Schedule:Constant", sched_name):
+            self.idf.newidfobject(
+                'Schedule:Compact',
+                Name=sched_name,
+                Schedule_Type_Limits_Name="Fraction",
+                Field_1="Through: 12/31",
+                Field_2="For: AllDays",
+                Field_3="Until: 24:00",
+                Field_4=1.0
+            )
+
+        # Apply natural ventilation objects for each zone
+        zone_names = self.get_zone_names()
+        for i, zone_name in enumerate(zone_names):
+            nv_object_name = f"NatVent_{zone_name.replace(' ', '_')}"
+            self.idf.newidfobject(
+                "ZoneVentilation:WindandStackOpenArea",
+                Name=nv_object_name,
+                Zone_or_Space_Name=zone_name,
+                Opening_Area=opening_area_m2,
+                Opening_Area_Fraction_Schedule_Name=sched_name,
+                # Autocalculate the opening effectiveness
+                Opening_Effectiveness="Autocalculate",
+                # Autocalculate the discharge coefficient for the opening
+                Discharge_Coefficient_for_Opening="Autocalculate",
+                # Accroding to archive/ECM.py file
+                Minimum_Indoor_Temperature=22,  # Indoor minimum temperature
+                # Indoor maximum temperature (set high value means no limit)
+                Maximum_Indoor_Temperature=100,
+                Delta_Temperature=1,  # Indoor-outdoor minimum temperature difference
+                Minimum_Outdoor_Temperature=18,  # Outdoor minimum temperature
+                Maximum_Outdoor_Temperature=28,  # Outdoor maximum temperature
+                Maximum_Wind_Speed=15  # Maximum wind speed
+            )
+
+        # Log the changes
+        logging.info(
+            f"Applied natural ventilation to {len(zone_names)} zones. {opening_area_m2} m2 of opening area for each zone.")
+
+    def get_surface_area(self, surface_name: str):
+        """
+        Return the area of the specified surface.
+
+        Args:
+            surface_name (str): The name of the surface to calculate the area for.
+
+        Returns:
+            float: The surface area in square meters.
+        """
+        surface = self.idf.getobject(
+            'BuildingSurface:Detailed'.upper(), surface_name)
+        if not surface:
+            return 0.0
+        return surface.area
+
+    def get_total_floor_area(self):
+        """
+        Get the total floor area of the building by summing zone areas.
+        If a zone's area is 'autocalculate', it calculates the area from the
+        geometry of its floor surfaces ('BuildingSurface:Detailed' with Surface_Type 'Floor').
+
+        Returns:
+            float: The total floor area in square meters. Returns 1.0 if calculation fails or yields zero.
+        """
+        # Check cache first
+        if self._floor_area is not None:
+            return self._floor_area
+
+        total_area = 0.0
+        zones = self.idf.idfobjects.get('ZONE', [])
+        # Get all surfaces once to avoid repeated lookups inside the loop
+        all_surfaces = self.idf.idfobjects.get('BUILDINGSURFACE:DETAILED', [])
+
+        if not zones:
+            logging.warning("No ZONE objects found in the IDF file.")
+            self._floor_area = 1.0  # Set cache to default
+            return 1.0
+
+        for zone in zones:
+            zone_area = 0.0
+            zone_name = zone.Name
+            # Default to autocalculate if field missing
+            floor_area_field = getattr(zone, 'Floor_Area', 'autocalculate')
+
+            # Try converting the field value to float first
+            try:
+                zone_area = float(floor_area_field)
+                if zone_area > 0:
+                    total_area += zone_area
+                    # Log the source of the area
+                    # logging.debug(f"Zone '{zone_name}': Using explicit Floor_Area = {zone_area} m2.")
+                    continue  # Go to the next zone
+                else:
+                    # Handle cases like 0.0 explicitly entered, treat as autocalculate needed
+                    logging.debug(
+                        f"Zone '{zone_name}': Explicit Floor_Area is {zone_area}, treating as autocalculate.")
+                    floor_area_field = 'autocalculate'  # Force recalculation
+            except (ValueError, TypeError):
+                # If conversion fails, it's likely a string like 'autocalculate'
+                if isinstance(floor_area_field, str) and (floor_area_field.lower() == 'autocalculate' or floor_area_field.lower() == ''):
+                    # Calculate area from floor surfaces geometry within this zone
+                    calculated_zone_area = 0.0
+                    zone_floor_surfaces = [
+                        s for s in all_surfaces
+                        # Case-insensitive compare
+                        if hasattr(s, 'Zone_Name') and s.Zone_Name.lower() == zone_name.lower()
+                        and hasattr(s, 'Surface_Type') and s.Surface_Type.lower() == 'floor'
+                    ]
+
+                    if not zone_floor_surfaces:
+                        logging.warning(
+                            f"Zone '{zone_name}' Area is 'autocalculate' but no 'Floor' type surfaces were found for it.")
+                    else:
+                        # logging.debug(f"Zone '{zone_name}': Calculating area from {len(zone_floor_surfaces)} floor surfaces.")
+                        for surface in zone_floor_surfaces:
+                            surface_name = surface.Name
+                            surf_area = surface.area
+                            # logging.debug(f"  - Surface '{surface_name}': Calculated Area = {surf_area} m2.")
+                            calculated_zone_area += surf_area
+
+                        if calculated_zone_area > 0:
+                            zone_area = calculated_zone_area
+                            total_area += zone_area
+                            # logging.debug(f"Zone '{zone_name}': Calculated Floor_Area = {zone_area} m2 from geometry.")
+                        else:
+                            # If geometric calculation failed or yielded zero, log a warning.
+                            # We won't fall back to Sizing:Zone here as the primary method failed.
+                            logging.warning(
+                                f"Zone '{zone_name}': Area is 'autocalculate' but geometric calculation yielded {calculated_zone_area:.4f} m2. Area not added.")
+                else:
+                    # Handle other unexpected string values
+                    logging.warning(
+                        f"Zone '{zone_name}' has an unsupported Floor_Area value: '{floor_area_field}'. Area not counted.")
+
+        # Cache the result, ensuring it's at least 1.0 if valid area is zero or calculation failed
+        self._floor_area = total_area if total_area > 0 else 1.0
+        if total_area <= 0:
+            logging.warning(
+                f"Calculated total floor area is {total_area:.4f}. Returning default value of 1.0 m2.")
+
+        # logging.info(f"Total calculated building floor area: {self._floor_area} m2.")
+        return self._floor_area
+</file>
+
+<file path="config.py">
+import os
+import pathlib
+import dotenv
+import torch
+
+dotenv.load_dotenv()
+data_dir = pathlib.Path(__file__).parent / "data"
+# energyplus installation directory
+eplus_dir = pathlib.Path("C:/EnergyPlus-24.2.0")
+results_dir = data_dir / "Results"
+
+
+def create_directories():
+    for key, value in CONFIG['paths'].items():
+        pathlib.Path(value).mkdir(parents=True, exist_ok=True)
+
+
+CONFIG = {
+    # Paths configuration
+    "paths": {
+        "data_dir": data_dir,
+        "results_dir": results_dir,  # Results Output Directory
+        # Prototype Building IDF Files Directory
+        "prototypes_dir": data_dir / "Prototypes",
+        "tmy_dir": data_dir / "TMYs",  # Typical Meteorological Year Files Directory
+        # Future Typical Meteorological Year Files Directory
+        "ftmy_dir": data_dir / "FTMYs",
+        "epsim_dir": results_dir / "EPSim",  # EnergyPlus Benchmark Output Directory
+        # Sensitivity Analysis and Optimization Results Output Directory
+        "sensitivity_dir": results_dir / "Sensitivity",
+        # Future Loads Simulation Output Directory
+        "future_load_dir": results_dir / "FutureLoad",
+        # Ensemble Simulation Output Directory
+        "ensemble_dir": results_dir / "Ensemble",
+        # EnergyPlus executable file path
+        "eplus_executable": eplus_dir / "energyplus.exe",
+        "log_dir": results_dir / "Logs",  # Log files output directory
+        "eui_data_dir": results_dir / "EUI_Data",  # EUI prediction data directory
+        "eui_models_dir": results_dir / "EUI_Models",  # EUI prediction models directory
+    },
+    # Constants configuration
+    "constants": {
+        'ng_conversion_factor': 3.2,  # conversion factor for natural gas to energy
+        # number of cores to use for simulation
+        'cpu_count_override': os.cpu_count() - 1,
+        'debug': False,  # debug mode
+    },
+
+    # Different Building Types Ratio of the city
+    "building_ratios": {
+        "office_large": 0.000663,  # Large office building
+        "office_medium": 0.001725,  # Medium office building
+        "apartment_high_rise": 0.000384,  # High-rise apartment building
+        "sf": 0.608149,  # Single-family residential
+        "mf": 0.389079  # Multi-family residential
+    },
+
+    # Energy conservation measures parameter ranges
+    "ecm_ranges": {
+        "shgc": [0.2, 0.4, 0.6, 0.8],  # Solar Heat Gain Coefficient
+        "win_u": [0.5, 1, 1.5, 2, 2.5, 3],  # Window U-value (W/m2K)
+        # Natural Ventilation Area (m2)
+        "nv_area": [0.4, 0.8, 1.2, 1.6, 2, 2.4],
+        "insu": [1, 2, 3, 4],  # Wall Insulation R-value (m2K/W)
+        "infl": [0.25, 0.5, 0.75, 1, 1.25, 1.5],  # Air Infiltration Rate (ACH)
+        # Cooling Coefficient of Performance
+        "cool_cop": [3.5, 4, 4.5, 5, 5.5, 6],
+        # Cooling Air Supply Temperature (C)
+        "cool_air_temp": [10, 12, 14, 16],
+        "lighting": [1, 2, 3],  # Lighting Power Density (W/m2)
+        "vt": [0.4, 0.6, 0.7]  # Visible Light Transmittance
+    },
+
+    # Lighting reduction rate
+    "lighting_reduction_map": {
+        "officelarge": {1: 0.2, 2: 0.47, 3: 0.53},
+        "officemedium": {1: 0.2, 2: 0.47, 3: 0.53},
+        "apartmenthighrise": {1: 0.35, 2: 0.45, 3: 0.55},
+        "singlefamilyresidential": {1: 0.45, 2: 0.5, 3: 0.64},
+        "multifamilyresidential": {1: 0.35, 2: 0.45, 3: 0.55},
+    },
+
+    # Simulation settings
+    "simulation": {
+        "start_year": 2040,
+        "end_year": 2040,
+        "default_output_suffix": "C",  # suffix for the output file
+        # Files to be cleaned up (except .sql)
+        "cleanup_files": ['.eso', '.mtr', '.rdd', '.mdd', '.err', '.svg', '.dxf', '.audit', '.bnd', '.eio', '.shd', '.edd', '.end', '.mtd', '.rvaudit'],
+    },
+
+    # sensitivity analysis settings
+    "analysis": {
+        "output_intermediary_files": True,  # Output intermediary files
+        "sensitivity_samples_n": 2,  # Number of samples for Saltelli's sampling
+        "n_estimators": 100,  # Number of trees for Random Forest
+        "random_state": 10,  # Random state for Random Forest
+        # Optimization model example: ['ols', 'rf', etc]
+        "optimization_model": 'ols',
+        "ga_population_size": 100,  # Population size for genetic algorithm
+        "ga_generations": 100,  # Number of generations for genetic algorithm
+    },
+
+    # PV system settings
+    'pv_analysis': {
+        'enabled': True,  # Enable PV analysis process
+        'pv_model_type': 'Sandia',  # Choose PV model type: 'Simple', 'Sandia', 'PVWatts'
+
+        # --- Simple PV Model (If pv_model_type == 'Simple') ---
+        'simple_pv_efficiency': 0.18,       # PV Module Efficiency
+        'simple_pv_coverage': 0.8,          # PV Module Coverage on the surface (considering gaps)
+
+        # --- Sandia PV Model (If pv_model_type == 'Sandia') ---
+        # 注意: 以下 Sandia 参数是示例值，你需要为你选择的组件填充真实数据
+        # 这些参数通常来自 NREL SAM 组件库或制造商数据表
+        'sandia_module_params': {
+            'active_area': 1.65,             # 单个组件有效面积 (m2) - 示例值
+            'num_cells_series': 60,          # 单个组件串联电池片数量 - 示例值 (例如 60片或72片电池的组件)
+            'num_cells_parallel': 1,         # 单个组件并联电池片数量 (通常为1)
+            'short_circuit_current': 9.5,    # 短路电流 (Amps) - 示例值
+            'open_circuit_voltage': 38.5,   # 开路电压 (Volts) - 示例值
+            'current_at_mpp': 9.0,           # 最大功率点电流 (Amps) - 示例值
+            'voltage_at_mpp': 32.0,          # 最大功率点电压 (Volts) - 示例值
+            'aIsc': 0.0004,                   # 短路电流的温度系数 (1/degC) - 示例值 (通常很小)
+            'aImp': 0.000216,                 # 最大功率点电流的温度系数 (1/degC) - 示例值
+            'c0': 0.99,                      #  - 示例值
+            'c1': 0.01,                      #  - 示例值
+            'BVoc0': -0.13,                  # 开路电压的温度系数 (Volts/degC) - 示例值 (通常为负)
+            'mBVoc': 0.0,                    #  - 示例值
+            'BVmp0': -0.14,                  # 最大功率点电压的温度系数 (Volts/degC) - 示例值
+            'mBVmp': 0.0,                    #  - 示例值
+            'diode_factor': 1.1,             # 二极管因子 - 示例值
+            'c2':  0.37957,                       #  - 示例值
+            'c3': -6.5492,                      #  - 示例值
+            'a0': 0.928, 'a1': 0.073144, 'a2': -0.019427, 'a3': 0.0017513, 'a4': -0.000051288, # IAM 参数 - 示例值
+            'b0': 1.0, 'b1': -0.002438, 'b2': 2.1e-05, 'b3': -1.7e-07, 'b4': 5.4e-10, 'b5': -1.5e-12, # IAM 参数 - 示例值
+            'delta_tc': 3.0,                 # NOCT 相关温度差 (deg C) - 示例值
+            'fd': 1.0,                       # 漫反射IAM因子 - 示例值
+            'a': -3.56, 'b': -0.075,          # 温度模型系数 - 示例值 (CEC/Sandia 温度模型)
+            'c4': 0.99, 'c5': 0.01,          #  - 示例值
+            'Ix0': 9.4, 'Ixx0': 5.5,         #  - 示例值
+            'c6': 0.1, 'c7': 0.9,            #  - 示例值
+            # --- 以下为电气连接参数，将由代码根据表面积计算模块数量来确定 ---
+            # 'number_of_series_strings_in_parallel': 1, # 这个在 Generator:Photovoltaic 中
+            # 'number_of_modules_in_series': 1,         # 这个在 Generator:Photovoltaic 中
+            # --- 热传递模式也将在代码中设置 ---
+            # 'heat_transfer_integration_mode': "Decoupled" # 或 "IntegratedSurfaceOutsideFace"
+        },
+        'sandia_pv_coverage': 0.9, # 假设使用 Sandia 模型时，组件排布更紧密，或者这代表每个组件自身的有效面积与总面积比
+
+        # --- PVWatts Model (如果 pv_model_type == 'PVWatts') ---
+        'pvwatts_dc_system_capacity_per_sqm': 144, # 每平方米屋顶的直流容量 (W/m2) - 用于单一系统估算
+        'pvwatts_module_type': 'Standard',
+        'pvwatts_array_type': 'FixedRoofMounted',
+        'pvwatts_system_losses': 0.14,
+        'pvwatts_dc_ac_ratio': 1.1,
+        'pvwatts_inverter_efficiency': 0.96,
+        'pvwatts_ground_coverage_ratio': 0.4,
+
+
+        # --- 通用参数 ---
+        'pv_inverter_efficiency': 0.96,      # 通用逆变器效率 (用于 Simple 和 Sandia 模型)
+        'heat_transfer_integration_mode': "Decoupled", # PV 传热集成模式
+
+        # --- 阴影/辐射分析参数 (保持不变) ---
+        'shadow_calculation_surface_types': ['ROOF', 'WALL'],
+        'radiation_threshold_high': 1000.0,
+        'radiation_threshold_low': 600.0,
+        'radiation_score_threshold': 70,
+        'max_score': 100.0,
+        'min_score': 0.0,
+        'pv_output_prefix': 'pv',
+        'shadow_output_prefix': 'shadow',
+    },
+
+    # EUI prediction settings
+    'eui_prediction': {
+        'device': 'cuda' if torch.cuda.is_available() else 'cpu',
+        'feature_columns': ["city", "btype", "ssp_code", "shgc", "win_u", "nv_area", "insu", "infl", "cool_cop", "cool_air_temp", "lighting", "vt"],
+        'target_column': 'eui',
+        'group_by_columns': ["city", "btype", "ssp_code"],
+        'train_val_test_split': [0.8, 0.1, 0.1], # train, val, test split ratio
+        'random_state': 42,
+        'batch_size': 64,
+        'learning_rate': 0.0001,
+        'num_epochs': 500,
+        'scale_features': True,
+    },
+
+    # Supabase settings
+    'supabase': {
+        'url': os.getenv('SUPABASE_URL'),  # Supabase URL
+        'key': os.getenv('SUPABASE_KEY'),  # Supabase key
+        'table': os.getenv('SUPABASE_TABLE'),  # Supabase table name
+    }
+}
+
+create_directories()
+</file>
+
+<file path="main.py">
+# TODO:使用带倾角的PV太阳能板
+
+import logging
+import sys
+import argparse
+from tqdm import tqdm
+from backend.services.optimization_service import OptimizationPipeline
+from backend.services.eui_data_pipeline import EUIDataPipeline
+from backend.services.eui_prediction_service import EUIPredictionService
+from backend.services.model_service import ModelService
+from backend.services.data_analysis_services import data_analysis
+from config import CONFIG
+
+logging.basicConfig(level=logging.INFO,
+                    filename=CONFIG['paths']['log_dir'] / "optimization.log",
+                    filemode="a",
+                    format="%(asctime)s - %(levelname)s - %(message)s"
+                    )
+
+def run_optimization(target_cities, target_ssps, target_btypes):
+    """Run the standard optimization pipeline."""
+    logging.info("Starting optimization process...")
+    logging.info(f"Configuration info: CPU core count = {CONFIG['constants']['cpu_count_override']}")
+    logging.info(f"EnergyPlus executable path = '{CONFIG['paths']['eplus_executable']}'")
+
+    for city in tqdm(target_cities, desc="Cities"):
+        for ssp in tqdm(target_ssps, desc="SSPs"):
+            weather_file = False
+            if str(ssp).upper() == "TMY":
+                if any(city.lower() in str(f).lower() for f in CONFIG['paths']['tmy_dir'].glob("*.epw")):
+                    weather_file = True
+            else:
+                if any(str(ssp).lower() in str(f).lower() for f in CONFIG['paths']['ftmy_dir'].glob("*.epw")): # Need to add a city check
+                    weather_file = True
+            if not weather_file:
+                logging.warning(f"Warning: Weather file for city '{city}' SSP '{ssp}' not found; skipping this scenario.")
+                continue
+            for btype in tqdm(target_btypes, desc="Building Types"):
+                proto_path_check = False
+                if any(btype.lower() in str(f).lower() for f in CONFIG['paths']['prototypes_dir'].glob("*.idf")):
+                    proto_path_check = True
+                if not proto_path_check:
+                    logging.warning(f"Warning: Prototype file for city '{city}' SSP '{ssp}' and btype '{btype}' not found; skipping this scenario.")
+                    continue
+                try:
+                    pipeline = OptimizationPipeline(city, ssp, btype, CONFIG)
+                    pipeline.run_full_pipeline(
+                        run_sens=True,
+                        build_model=True,
+                        run_opt=True,
+                        validate=True,
+                        run_pv=True,
+                        save=True
+                    )
+                except FileNotFoundError as e:
+                    logging.error(f"Error: Initialization failed for {city}/{ssp}/{btype} - {e}")
+                    sys.exit(1)
+                except Exception as e:
+                    logging.error(f"Error occurred for {city}/{ssp}/{btype} - {e}")
+
+    logging.info("Optimization process completed successfully.")
+
+def collect_eui_data(target_cities, target_ssps, target_btypes):
+    """Collect EUI data for training the prediction model."""
+    logging.info("Starting EUI data collection...")
+    
+    data_pipeline = EUIDataPipeline(CONFIG)
+    
+    try:
+        training_data = data_pipeline.prepare_training_data(target_cities, target_ssps, target_btypes)
+        logging.info(f"Collected {len(training_data)} training samples.")
+    except Exception as e:
+        logging.error(f"Error occurred during EUI data collection - {e}")
+        
+    logging.info("EUI data collection completed successfully.")
+
+def train_eui_model():
+    """Train the EUI prediction model."""
+    logging.info("Starting EUI model training...")
+    
+    model_service = ModelService(CONFIG)
+    prediction_service = EUIPredictionService(CONFIG)
+    data_pipeline = EUIDataPipeline(CONFIG)
+    
+    try:
+        data = data_pipeline.load_data()
+        prediction_service.train_model(
+            data,
+            model_service
+            )
+        logging.info("Model training completed successfully.")
+    except Exception as e:
+        logging.error(f"Error occurred during EUI model training - {e}")
+        
+    logging.info("EUI model training completed successfully.")
+
+def predict_eui(city, ssp, btype):
+    """Predict EUI for a specific building type."""
+       
+    logging.info(f"Predicting EUI for {city}/{ssp}/{btype}...")
+    
+    prediction_service = EUIPredictionService(CONFIG)
+    
+    try:
+        building_data = {
+            'btype': btype,
+            'zones': [],
+            'surfaces': [],
+            'equipment': [],
+            'zone_connections': [],
+            'surface_zone_map': [],
+            'equipment_zone_map': []
+        }
+        
+        eui = prediction_service.predict_eui(building_data)
+        logging.info(f"Predicted EUI for {city}/{ssp}/{btype}: {eui}")
+        return eui
+    except Exception as e:
+        logging.error(f"Error occurred during EUI prediction - {e}")
+        return None
+
+def main():
+    parser = argparse.ArgumentParser(description='EP-WebUI: Energy Performance Web User Interface')
+    parser.add_argument('--mode', type=str, default='optimize',
+                        choices=['optimize', 'collect', 'train', 'predict', 'analyze'],
+                        help='Operation mode: optimize, azure, collect, train, or predict')
+    parser.add_argument('--cities', type=str, nargs='+', default=['Chicago'],
+                        help='Target cities')
+    parser.add_argument('--ssps', type=str, nargs='+', default=['TMY', '126', '245', '370', '434', '585'], # 'TMY', '126', '245', '370', '434', '585' (CHOICE)
+                        help='Target SSP scenarios')
+    parser.add_argument('--btypes', type=str, nargs='+', default=['OfficeMedium', 'OfficeLarge','ApartmentHighRise','SingleFamilyResidential','MultiFamilyResidential'],
+                        help='Target building types')
+    parser.add_argument('--city', type=str, help='City for prediction')
+    parser.add_argument('--ssp', type=str, help='SSP scenario for prediction')
+    parser.add_argument('--btype', type=str, help='Building type for prediction')
+    
+    args = parser.parse_args()
+    
+    target_ssps = []
+    for ssp in args.ssps:
+        try:
+            target_ssps.append(int(ssp))
+        except ValueError:
+            target_ssps.append(ssp)
+    
+    if args.mode == 'optimize':
+        run_optimization(args.cities, target_ssps, args.btypes)
+    elif args.mode == 'collect':
+        collect_eui_data(args.cities, target_ssps, args.btypes)
+    elif args.mode == 'train':
+        train_eui_model()
+    elif args.mode == 'predict':
+        if not all([args.city, args.ssp, args.btype]):
+            logging.error("City, SSP, and building type must be specified for prediction mode.")
+            sys.exit(1)
+        predict_eui(args.city, args.ssp, args.btype)
+    elif args.mode == 'analyze':
+        data_analysis()
+
+if __name__ == "__main__":
+    main()
+</file>
+
+</files>

@@ -114,39 +114,39 @@ CONFIG = {
         # 注意: 以下 Sandia 参数是示例值，你需要为你选择的组件填充真实数据
         # 这些参数通常来自 NREL SAM 组件库或制造商数据表
         'sandia_module_params': {
-            'active_area': 1.65,             # 单个组件有效面积 (m2) - 示例值
-            'num_cells_series': 60,          # 单个组件串联电池片数量 - 示例值 (例如 60片或72片电池的组件)
-            'num_cells_parallel': 1,         # 单个组件并联电池片数量 (通常为1)
-            'short_circuit_current': 9.5,    # 短路电流 (Amps) - 示例值
-            'open_circuit_voltage': 38.5,   # 开路电压 (Volts) - 示例值
-            'current_at_mpp': 9.0,           # 最大功率点电流 (Amps) - 示例值
-            'voltage_at_mpp': 32.0,          # 最大功率点电压 (Volts) - 示例值
-            'aIsc': 0.0004,                   # 短路电流的温度系数 (1/degC) - 示例值 (通常很小)
-            'aImp': 0.000216,                 # 最大功率点电流的温度系数 (1/degC) - 示例值
-            'c0': 0.99,                      #  - 示例值
-            'c1': 0.01,                      #  - 示例值
-            'BVoc0': -0.13,                  # 开路电压的温度系数 (Volts/degC) - 示例值 (通常为负)
-            'mBVoc': 0.0,                    #  - 示例值
-            'BVmp0': -0.14,                  # 最大功率点电压的温度系数 (Volts/degC) - 示例值
-            'mBVmp': 0.0,                    #  - 示例值
-            'diode_factor': 1.1,             # 二极管因子 - 示例值
-            'c2':  0.37957,                       #  - 示例值
-            'c3': -6.5492,                      #  - 示例值
-            'a0': 0.928, 'a1': 0.073144, 'a2': -0.019427, 'a3': 0.0017513, 'a4': -0.000051288, # IAM 参数 - 示例值
-            'b0': 1.0, 'b1': -0.002438, 'b2': 2.1e-05, 'b3': -1.7e-07, 'b4': 5.4e-10, 'b5': -1.5e-12, # IAM 参数 - 示例值
-            'delta_tc': 3.0,                 # NOCT 相关温度差 (deg C) - 示例值
-            'fd': 1.0,                       # 漫反射IAM因子 - 示例值
-            'a': -3.56, 'b': -0.075,          # 温度模型系数 - 示例值 (CEC/Sandia 温度模型)
-            'c4': 0.99, 'c5': 0.01,          #  - 示例值
-            'Ix0': 9.4, 'Ixx0': 5.5,         #  - 示例值
-            'c6': 0.1, 'c7': 0.9,            #  - 示例值
+            'active_area': 1.179,             # 单个组件有效面积 (m2) - Sanyo HIP-200BA3
+            'num_cells_series': 36,          # 单个组件串联电池片数量 - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'num_cells_parallel': 1,         # 单个组件并联电池片数量 - SAND2004-3535 (B17)
+            'short_circuit_current': 4.80,    # 短路电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'open_circuit_voltage': 21.40,   # 开路电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'current_at_mpp': 4.10,           # 最大功率点电流 (Amps) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'voltage_at_mpp': 17.10,          # 最大功率点电压 (Volts) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'aIsc': 0.0006,                   # 短路电流的温度系数 (1/degC) - SAND2004-3535 (B17)
+            'aImp': 0.0001,                 # 最大功率点电流的温度系数 (1/degC) - SAND2004-3535 (B17)
+            'c0': 0.9604,                      #  - SAND2004-3535
+            'c1': 0.0396,                      #  - SAND2004-3535
+            'BVoc0': -0.080,                  # 开路电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'mBVoc': 0.0,                    #  - SAND2004-3535 (B19) 
+            'BVmp0': -0.083,                  # 最大功率点电压的温度系数 (Volts/degC) - SAND2004-3535 (B19) 示例组件 (ASE-70-ALF)
+            'mBVmp': 0.0,                    #  - SAND2004-3535 (B19) 
+            'diode_factor': 1.217,             # 二极管因子 - SAND2004-3535 (B19)
+            'c2':  -0.40718,                       #  - SAND2004-3535 (B19) 
+            'c3': -14.0746,                      #  - SAND2004-3535 (B19) 
+            'a0': 0.918093, 'a1': 0.086255, 'a2': -0.020356, 'a3': 0.002004, 'a4': -0.000072, # IAM 参数 - De Soto (2006)多晶硅推荐值
+            'b0': 1.0, 'b1': -0.002438, 'b2': 0.003103, 'b3': -0.0001246, 'b4': 1.211e-7, 'b5': -1.36e-9, # IAM 参数 - PVsyst 默认值 / SAND2004-3535 (B17)
+            'delta_tc': 3.0,                 # NOCT 相关温度差 (deg C) - SAND2004-3535 安装方式：Open rack
+            'fd': 1.0,                       # 漫反射IAM因子 - SAND2004-3535 (B5, B17, S32, S38)
+            'a': -3.56, 'b': -0.075,          # 温度模型系数 - SAND2004-3535 安装方式：Open rack
+            'c4': 0.9789, 'c5': 0.0211,          #  - SAND2004-3535 (B19)
+            'Ix0': 4.70, 'Ixx0': 4.30,         #  - 典型c-Si I-V曲线形状
+            'c6': 1.1468, 'c7': -0.1468,            #  - SAND2004-3535 (B19)
             # --- 以下为电气连接参数，将由代码根据表面积计算模块数量来确定 ---
             # 'number_of_series_strings_in_parallel': 1, # 这个在 Generator:Photovoltaic 中
             # 'number_of_modules_in_series': 1,         # 这个在 Generator:Photovoltaic 中
             # --- 热传递模式也将在代码中设置 ---
             # 'heat_transfer_integration_mode': "Decoupled" # 或 "IntegratedSurfaceOutsideFace"
         },
-        'sandia_pv_coverage': 0.9, # 假设使用 Sandia 模型时，组件排布更紧密，或者这代表每个组件自身的有效面积与总面积比
+        'sandia_pv_coverage': 0.9, # 每个组件自身的有效面积与总面积比
 
         # --- PVWatts Model (如果 pv_model_type == 'PVWatts') ---
         'pvwatts_dc_system_capacity_per_sqm': 144, # 每平方米屋顶的直流容量 (W/m2) - 用于单一系统估算

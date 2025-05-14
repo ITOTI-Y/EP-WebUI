@@ -33,7 +33,7 @@ class SensitivityDataUploader:
             self.url = config['supabase']['url']
             self.key = config['supabase']['key']
             self.table = config['supabase']['table']
-            self.root_dir = config['paths']['results_dir'] / 'Temp'
+            self.root_dir = config['paths']['epsim_dir']
         else:
             self.url = url
             self.key = key
@@ -284,7 +284,7 @@ if __name__ == "__main__":
     SUPABASE_URL = CONFIG['supabase']['url']
     SUPABASE_KEY = CONFIG['supabase']['key']
     SUPABASE_TABLE = CONFIG['supabase']['table']
-    ROOT_DIR = CONFIG['paths']['results_dir'] / 'Temp'
+    ROOT_DIR = CONFIG['paths']['epsim_dir']
 
     # 1. Perform Environment Variable Checks Early
     if not SUPABASE_URL or not SUPABASE_KEY:
