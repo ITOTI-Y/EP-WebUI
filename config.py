@@ -90,7 +90,7 @@ CONFIG = {
         "n_estimators": 200,  # Number of trees for Random Forest
         "random_state": 20,  # Random state for Random Forest
         # Optimization model example: ['ols', 'rf', etc]
-        "optimization_model": 'ols',
+        "optimization_model": 'rf',
     },
 
     # PV system settings
